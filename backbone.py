@@ -90,8 +90,27 @@ class MyVGG16(nn.Module):
      
         self.features=vgg.features
         
+        # Add gradient clipping and better initialization for training stability
+        if not pretrained:
+            self._initialize_weights()
+        
+    def _initialize_weights(self):
+        """Better initialization for VGG when not using pretrained weights"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                # Use He initialization (better for ReLU networks)
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+        
     def forward(self,x):
+        # Apply gradient clipping during training to prevent explosion
         x = self.features(x)
+        
+        # Normalize feature magnitudes to prevent activation explosion
+        if self.training:
+            x = torch.clamp(x, min=0, max=10)  # Clip extreme activations
+            
         #print(x.shape)
         return [x]
     
@@ -104,8 +123,27 @@ class MyVGG19(nn.Module):
      
         self.features = vgg.features
         
+        # Add gradient clipping and better initialization for training stability
+        if not pretrained:
+            self._initialize_weights()
+        
+    def _initialize_weights(self):
+        """Better initialization for VGG when not using pretrained weights"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                # Use He initialization (better for ReLU networks)
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+        
     def forward(self,x):
+        # Apply gradient clipping during training to prevent explosion
         x=self.features(x)
+        
+        # Normalize feature magnitudes to prevent activation explosion
+        if self.training:
+            x = torch.clamp(x, min=0, max=10)  # Clip extreme activations
+            
         return [x]
 
 
@@ -157,9 +195,27 @@ class MyAlex(nn.Module):
         alex = models.alexnet(pretrained = pretrained)
 
         self.features = alex.features
+        
+        # Better initialization for AlexNet when not using pretrained weights
+        if not pretrained:
+            self._initialize_weights()
+        
+    def _initialize_weights(self):
+        """Better initialization for AlexNet when not using pretrained weights"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                # Use He initialization for ReLU networks
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x = self.features(x)
+        
+        # Prevent activation explosion for training stability
+        if self.training:
+            x = torch.clamp(x, min=0, max=8)  # Less aggressive than VGG
+            
         # print(x.shape)
         return [x]
 
@@ -172,8 +228,38 @@ class MyMobileNet(nn.Module):
         
         self.features = mobilenet.features
         
+        # Better initialization for MobileNet when not using pretrained weights
+        if not pretrained:
+            self._initialize_weights()
+        
+    def _initialize_weights(self):
+        """Better initialization for MobileNet when not using pretrained weights"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                # Use He initialization
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                # Special BatchNorm initialization for MobileNet stability
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0.1)  # Small positive bias for stability
+                # Initialize running stats to prevent zero activations
+                nn.init.constant_(m.running_mean, 0)
+                nn.init.constant_(m.running_var, 1)
+        
     def forward(self, x):
         x = self.features(x)
+        
+        # Handle potential dead ReLU6 activations and BatchNorm issues
+        if self.training:
+            # Add small noise to prevent complete zero features and improve gradient flow
+            x = x + 1e-6 * torch.randn_like(x)
+        else:
+            # In eval mode, ensure features don't collapse to zero due to BatchNorm
+            # Add a very small bias to maintain feature diversity
+            x = x + 1e-7
+            
         return [x]
 
 

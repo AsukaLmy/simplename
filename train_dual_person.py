@@ -430,7 +430,7 @@ def parse_args():
     parser.add_argument('--fusion_method', type=str, default='concat',
                         choices=['concat', 'add', 'subtract', 'multiply', 'attention'],
                         help='Feature fusion method')
-    parser.add_argument('--shared_backbone', action='store_true', default=True,
+    parser.add_argument('--shared_backbone', action='store_true', default=False,
                         help='Share backbone weights between two persons')
     
     # Training parameters

@@ -1,8 +1,34 @@
+# Core PyTorch dependencies
 torch>=1.9.0
 torchvision>=0.10.0
+
+# Data processing and numerical computation
 numpy>=1.21.0
 pillow>=8.3.0
+opencv-python>=4.5.0
+
+# Machine learning and evaluation
 scikit-learn>=1.0.0
+
+# Visualization and plotting
 matplotlib>=3.4.0
 seaborn>=0.11.0
-opencv-python>=4.5.0
+
+# System and utility dependencies
+argparse  # Built-in Python module (no version needed)
+json  # Built-in Python module
+os  # Built-in Python module
+sys  # Built-in Python module
+time  # Built-in Python module
+datetime  # Built-in Python module
+random  # Built-in Python module
+collections  # Built-in Python module
+math  # Built-in Python module
+
+# Additional utilities for development and debugging
+tqdm>=4.62.0  # Progress bars for training loops
+tensorboard>=2.7.0  # Optional: for advanced logging
+jupyter>=1.0.0  # Optional: for notebook analysis
+
+# Note: The following are built-in Python modules and don't need installation:
+# argparse, json, os, sys, time, datetime, random, collections, math, traceback

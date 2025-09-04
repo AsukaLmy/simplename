@@ -152,11 +152,18 @@ def get_dual_person_downsampling_data_loaders(data_path, batch_size=16, num_work
     )
     
     # Create samplers for all datasets
-    train_sampler = EpochDownsampleSampler(
-        train_dataset, 
-        samples_per_epoch=train_samples_per_epoch,
-        balance_classes=balance_train_classes
-    )
+    # Handle train_samples_per_epoch=0 as "use all data"
+    if train_samples_per_epoch == 0:
+        train_sampler = None  # Use all training data without downsampling
+        effective_train_samples = len(train_dataset)
+        print(f"Using all training data: {effective_train_samples} samples")
+    else:
+        train_sampler = EpochDownsampleSampler(
+            train_dataset, 
+            samples_per_epoch=train_samples_per_epoch,
+            balance_classes=balance_train_classes
+        )
+        effective_train_samples = train_samples_per_epoch
     
     # Create validation sampler if downsampling is enabled
     if val_samples_per_epoch is not None:
@@ -182,7 +189,8 @@ def get_dual_person_downsampling_data_loaders(data_path, batch_size=16, num_work
     train_loader = DataLoader(
         train_dataset, 
         batch_size=batch_size,
-        sampler=train_sampler,  # Use custom sampler instead of shuffle
+        sampler=train_sampler,  # Use custom sampler or None for full dataset
+        shuffle=True if train_sampler is None else False,  # Shuffle only when not using sampler
         num_workers=num_workers, 
         pin_memory=True
     )
@@ -212,7 +220,7 @@ def get_dual_person_downsampling_data_loaders(data_path, batch_size=16, num_work
     
     print(f"Dual-Person Downsampling Data Loaders Created:")
     print(f"  Original train dataset: {len(train_dataset)} samples")
-    print(f"  Train samples per epoch: {train_samples_per_epoch} samples")
+    print(f"  Train samples per epoch: {effective_train_samples} samples")
     print(f"  Original validation dataset: {len(val_dataset)} samples")
     print(f"  Val samples per epoch: {val_samples_per_epoch or 'Full dataset'}")
     print(f"  Original test dataset: {len(test_dataset)} samples")
@@ -220,7 +228,7 @@ def get_dual_person_downsampling_data_loaders(data_path, batch_size=16, num_work
     print(f"  Train batches per epoch: {len(train_loader)}")
     print(f"  Val batches per epoch: {len(val_loader)}")
     print(f"  Test batches per epoch: {len(test_loader)}")
-    print(f"  Class balancing enabled: {balance_train_classes}")
+    print(f"  Class balancing enabled: {balance_train_classes if train_sampler else 'Natural distribution'}")
     
     return train_loader, val_loader, test_loader, interaction_labels
 

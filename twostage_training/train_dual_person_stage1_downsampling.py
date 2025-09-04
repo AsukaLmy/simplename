@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
+from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR, ReduceLROnPlateau
 import argparse
 import os
 import sys
@@ -17,6 +17,7 @@ import seaborn as sns
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dual_person_classifier import DualPersonInteractionClassifier
+from enhanced_dual_person_classifier import OptimalDualPersonClassifier
 from twostage_training.dual_person_downsampling_dataset import get_dual_person_downsampling_data_loaders, print_dual_person_dataset_statistics
 
 
@@ -32,18 +33,33 @@ class DualPersonStage1DownsamplingTrainer:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
         
-        # Create dual-person model
-        self.model = DualPersonInteractionClassifier(
-            backbone_name=config.backbone,
-            pretrained=config.pretrained,
-            num_interaction_classes=5,
-            fusion_method=config.fusion_method,
-            shared_backbone=config.shared_backbone
-        ).to(self.device)
+        # Create dual-person model - use optimal model for large datasets
+        if getattr(config, 'use_optimal_model', False):
+            self.model = OptimalDualPersonClassifier(
+                backbone_name=config.backbone,
+                pretrained=config.pretrained,
+                fusion_method=config.fusion_method,
+                dropout_rate=getattr(config, 'dropout_rate', 0.2)
+            ).to(self.device)
+            print("Using OptimalDualPersonClassifier for large dataset")
+        else:
+            self.model = DualPersonInteractionClassifier(
+                backbone_name=config.backbone,
+                pretrained=config.pretrained,
+                num_interaction_classes=5,
+                fusion_method=config.fusion_method,
+                shared_backbone=config.shared_backbone
+            ).to(self.device)
         
-        # Freeze stage2 classifier - only train stage1
-        for param in self.model.stage2_classifier.parameters():
-            param.requires_grad = False
+        # Freeze stage2 classifier - only train stage1 (if exists)
+        if hasattr(self.model, 'stage2_classifier'):
+            for param in self.model.stage2_classifier.parameters():
+                param.requires_grad = False
+        
+        # Optionally freeze early backbone layers for small sample training
+        if getattr(config, 'freeze_backbone_layers', 0) > 0 and config.pretrained:
+            self._freeze_backbone_layers(config.freeze_backbone_layers)
+            print(f"Frozen first {config.freeze_backbone_layers} backbone layers")
         
         print("Dual-Person Stage 1 Downsampling Training: Stage2 classifier frozen")
         print(f"Fusion method: {config.fusion_method}")
@@ -81,11 +97,17 @@ class DualPersonStage1DownsamplingTrainer:
                                      momentum=0.9,
                                      weight_decay=config.weight_decay)
         
+        # Add gradient clipping - especially important for small sample training
+        self.max_grad_norm = getattr(config, 'max_grad_norm', 1.0)
+        
         # Create scheduler
         if config.scheduler == 'step':
             self.scheduler = StepLR(self.optimizer, step_size=config.step_size, gamma=0.1)
         elif config.scheduler == 'cosine':
             self.scheduler = CosineAnnealingLR(self.optimizer, T_max=config.epochs)
+        elif config.scheduler == 'plateau':
+            self.scheduler = ReduceLROnPlateau(self.optimizer, mode='max', factor=0.5, 
+                                             patience=5, verbose=True, min_lr=1e-7)
         else:
             self.scheduler = None
         
@@ -102,6 +124,11 @@ class DualPersonStage1DownsamplingTrainer:
         self.best_val_acc = 0.0
         self.best_val_f1 = 0.0
         
+        # Early stopping for small sample training
+        self.early_stopping_patience = getattr(config, 'early_stopping_patience', 15)
+        self.patience_counter = 0
+        self.early_stopped = False
+        
         # Create save directory
         self.save_dir = os.path.join(config.save_dir, 
                                    f"dual_person_stage1_downsampling_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
@@ -113,6 +140,31 @@ class DualPersonStage1DownsamplingTrainer:
         
         print(f"Experiment directory: {self.save_dir}")
     
+    def _freeze_backbone_layers(self, num_layers):
+        """Freeze early layers of backbone for regularization"""
+        def freeze_layers(backbone, num_layers):
+            if hasattr(backbone, 'features'):
+                # For MobileNet, VGG, etc.
+                layers = list(backbone.features.children())
+            else:
+                layers = list(backbone.children())
+            
+            frozen_count = 0
+            for layer in layers[:num_layers]:
+                for param in layer.parameters():
+                    param.requires_grad = False
+                frozen_count += 1
+            return frozen_count
+        
+        frozen_A = freeze_layers(self.model.backbone_A, num_layers)
+        if not self.config.shared_backbone:
+            frozen_B = freeze_layers(self.model.backbone_B, num_layers)
+        else:
+            frozen_B = frozen_A
+        
+        print(f"  Backbone A: {frozen_A} layers frozen")
+        print(f"  Backbone B: {frozen_B} layers frozen")
+    
     def train_epoch(self, train_loader, epoch):
         """Train for one epoch with downsampling"""
         self.model.train()
@@ -123,7 +175,8 @@ class DualPersonStage1DownsamplingTrainer:
         samples_processed = 0
         
         # Update sampler for this epoch (ensures different sampling each epoch)
-        if hasattr(train_loader.sampler, 'dataset'):
+        # Only for downsampling mode - if using all data, sampler is None
+        if train_loader.sampler is not None and hasattr(train_loader.sampler, 'dataset'):
             train_loader.sampler.dataset.set_epoch(epoch)
         
         for batch_idx, batch in enumerate(train_loader):
@@ -141,6 +194,11 @@ class DualPersonStage1DownsamplingTrainer:
             # Backward pass
             self.optimizer.zero_grad()
             loss.backward()
+            
+            # Apply gradient clipping for training stability
+            if self.max_grad_norm is not None:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+            
             self.optimizer.step()
             
             # Record loss and predictions
@@ -152,7 +210,9 @@ class DualPersonStage1DownsamplingTrainer:
             
             # Print progress
             if batch_idx % self.config.log_interval == 0:
-                print(f'Train Epoch: {epoch} [{samples_processed}/{self.config.train_samples_per_epoch} '
+                # Handle case when train_samples_per_epoch=0 (use all data)
+                total_samples_text = "all data" if self.config.train_samples_per_epoch == 0 else str(self.config.train_samples_per_epoch)
+                print(f'Train Epoch: {epoch} [{samples_processed}/{total_samples_text} '
                       f'({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}')
         
         # Calculate epoch metrics
@@ -228,7 +288,10 @@ class DualPersonStage1DownsamplingTrainer:
             
             # Update scheduler
             if self.scheduler:
-                self.scheduler.step()
+                if isinstance(self.scheduler, ReduceLROnPlateau):
+                    self.scheduler.step(val_acc)  # Use validation accuracy for plateau scheduler
+                else:
+                    self.scheduler.step()
             
             # Record metrics
             epoch_time = time.time() - epoch_start_time
@@ -245,18 +308,35 @@ class DualPersonStage1DownsamplingTrainer:
             print(f'           Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, Val F1: {val_f1:.4f}')
             print(f'           Time: {epoch_time:.2f}s, Samples: {samples_processed}')
             
-            # Save best models
-            if val_loss < self.best_val_loss:
-                self.best_val_loss = val_loss
-                self.save_checkpoint('best_loss', epoch, val_loss, val_acc, val_f1)
-            
+            # Save best models and early stopping logic
+            improved = False
             if val_acc > self.best_val_acc:
                 self.best_val_acc = val_acc
                 self.save_checkpoint('best_accuracy', epoch, val_loss, val_acc, val_f1)
+                improved = True
+                print(f'           *** New best validation accuracy: {val_acc:.4f} ***')
+            
+            if val_loss < self.best_val_loss:
+                self.best_val_loss = val_loss
+                self.save_checkpoint('best_loss', epoch, val_loss, val_acc, val_f1)
+                if not improved:
+                    improved = True
             
             if val_f1 > self.best_val_f1:
                 self.best_val_f1 = val_f1
                 self.save_checkpoint('best_f1', epoch, val_loss, val_acc, val_f1)
+            
+            # Early stopping logic
+            if improved:
+                self.patience_counter = 0
+            else:
+                self.patience_counter += 1
+                print(f'           No improvement for {self.patience_counter}/{self.early_stopping_patience} epochs')
+                
+                if self.patience_counter >= self.early_stopping_patience:
+                    print(f'Early stopping triggered after {epoch} epochs!')
+                    self.early_stopped = True
+                    break
             
             # Save regular checkpoint
             if epoch % self.config.save_interval == 0:
@@ -532,13 +612,14 @@ def parse_args():
     
     # Dual-person model parameters
     parser.add_argument('--backbone', type=str, default='mobilenet',
-                        choices=['mobilenet'], help='Backbone network')
+                        choices=['mobilenet', 'vgg16', 'vgg19', 'resnet18', 'resnet50', 'alexnet', 'inception_v3'], 
+                        help='Backbone network')
     parser.add_argument('--pretrained', action='store_true', default=True,
                         help='Use pretrained backbone')
     parser.add_argument('--fusion_method', type=str, default='concat',
                         choices=['concat', 'add', 'subtract', 'multiply', 'attention'],
                         help='Feature fusion method')
-    parser.add_argument('--shared_backbone', action='store_true', default=True,
+    parser.add_argument('--shared_backbone', action='store_true', default=False,
                         help='Share backbone weights between two persons')
     
     # Training parameters
@@ -551,9 +632,21 @@ def parse_args():
     parser.add_argument('--optimizer', type=str, default='adam',
                         choices=['adam', 'sgd'], help='Optimizer')
     parser.add_argument('--scheduler', type=str, default='step',
-                        choices=['step', 'cosine', 'none'], help='Learning rate scheduler')
+                        choices=['step', 'cosine', 'plateau', 'none'], help='Learning rate scheduler')
     parser.add_argument('--step_size', type=int, default=20,
                         help='Step size for StepLR scheduler')
+    
+    # Advanced training parameters
+    parser.add_argument('--early_stopping_patience', type=int, default=15,
+                        help='Early stopping patience')
+    parser.add_argument('--freeze_backbone_layers', type=int, default=0,
+                        help='Number of early backbone layers to freeze (0=none)')
+    parser.add_argument('--max_grad_norm', type=float, default=1.0,
+                        help='Gradient clipping norm (None to disable)')
+    parser.add_argument('--use_optimal_model', action='store_true', default=False,
+                        help='Use optimal model architecture for large datasets')
+    parser.add_argument('--dropout_rate', type=float, default=0.2,
+                        help='Dropout rate for optimal model')
     
     # Dataset parameters
     parser.add_argument('--crop_padding', type=int, default=20,

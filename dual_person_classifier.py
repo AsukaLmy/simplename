@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from backbone import MyMobileNet
+from backbone import MyMobileNet, MyVGG16, MyVGG19, MyRes18, MyRes50, MyAlex, MyInception_v3
 
 
 class DualPersonInteractionClassifier(nn.Module):
@@ -20,7 +20,7 @@ class DualPersonInteractionClassifier(nn.Module):
     """
     
     def __init__(self, backbone_name='mobilenet', pretrained=True, num_interaction_classes=5, 
-                 fusion_method='concat', shared_backbone=True):
+                 fusion_method='concat', shared_backbone=False):
         super(DualPersonInteractionClassifier, self).__init__()
         
         self.num_interaction_classes = num_interaction_classes
@@ -35,6 +35,48 @@ class DualPersonInteractionClassifier(nn.Module):
             else:
                 self.backbone_B = MyMobileNet(pretrained=pretrained)  # Separate weights
             self.feature_dim = 1280
+        elif backbone_name == 'vgg16':
+            self.backbone_A = MyVGG16(pretrained=pretrained)
+            if shared_backbone:
+                self.backbone_B = self.backbone_A
+            else:
+                self.backbone_B = MyVGG16(pretrained=pretrained)
+            self.feature_dim = 512
+        elif backbone_name == 'vgg19':
+            self.backbone_A = MyVGG19(pretrained=pretrained)
+            if shared_backbone:
+                self.backbone_B = self.backbone_A
+            else:
+                self.backbone_B = MyVGG19(pretrained=pretrained)
+            self.feature_dim = 512
+        elif backbone_name == 'resnet18':
+            self.backbone_A = MyRes18(pretrained=pretrained)
+            if shared_backbone:
+                self.backbone_B = self.backbone_A
+            else:
+                self.backbone_B = MyRes18(pretrained=pretrained)
+            self.feature_dim = 512
+        elif backbone_name == 'resnet50':
+            self.backbone_A = MyRes50(pretrained=pretrained)
+            if shared_backbone:
+                self.backbone_B = self.backbone_A
+            else:
+                self.backbone_B = MyRes50(pretrained=pretrained)
+            self.feature_dim = 2048
+        elif backbone_name == 'alexnet':
+            self.backbone_A = MyAlex(pretrained=pretrained)
+            if shared_backbone:
+                self.backbone_B = self.backbone_A
+            else:
+                self.backbone_B = MyAlex(pretrained=pretrained)
+            self.feature_dim = 256
+        elif backbone_name == 'inception_v3':
+            self.backbone_A = MyInception_v3(pretrained=pretrained)
+            if shared_backbone:
+                self.backbone_B = self.backbone_A
+            else:
+                self.backbone_B = MyInception_v3(pretrained=pretrained)
+            self.feature_dim = 768  # Using Mixed_6e output
         else:
             raise ValueError(f"Unsupported backbone: {backbone_name}")
         
@@ -89,7 +131,14 @@ class DualPersonInteractionClassifier(nn.Module):
     def extract_person_features(self, person_images, backbone):
         """Extract features for a batch of person images"""
         # Input: [batch_size, 3, H, W]
-        features = backbone(person_images)[0]  # Get the last feature map
+        feature_maps = backbone(person_images)  # Returns list of feature maps
+        
+        # For Inception_v3, use the last feature map (Mixed_6e)
+        if isinstance(backbone, MyInception_v3):
+            features = feature_maps[-1]  # Use Mixed_6e (768 channels)
+        else:
+            features = feature_maps[0]  # For other networks, use the only output
+            
         pooled_features = self.global_pool(features)  # [batch_size, feature_dim, 1, 1]
         pooled_features = pooled_features.view(pooled_features.size(0), -1)  # [batch_size, feature_dim]
         return pooled_features
