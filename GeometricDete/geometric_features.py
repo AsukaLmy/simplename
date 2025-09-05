@@ -1,0 +1,225 @@
+import torch
+import numpy as np
+import math
+
+def extract_geometric_features(box_A, box_B, image_width=None, image_height=None):
+    """
+    Extract 7 core geometric features from two person bounding boxes
+    
+    Args:
+        box_A, box_B: torch.Tensor or list [x1, y1, x2, y2] format
+        image_width, image_height: normalization parameters
+        
+    Returns:
+        torch.Tensor: [7] geometric features
+    """
+    if isinstance(box_A, (list, tuple)):
+        box_A = torch.tensor(box_A, dtype=torch.float32)
+    if isinstance(box_B, (list, tuple)):
+        box_B = torch.tensor(box_B, dtype=torch.float32)
+    
+    # Handle batch dimension
+    if box_A.dim() == 1:
+        box_A = box_A.unsqueeze(0)
+        box_B = box_B.unsqueeze(0)
+    
+    batch_size = box_A.size(0)
+    features = []
+    
+    for i in range(batch_size):
+        # Extract coordinates - JRDB format: [x, y, width, height]
+        x_A, y_A, w_A, h_A = box_A[i]
+        x_B, y_B, w_B, h_B = box_B[i]
+        
+        # Convert to [x1, y1, x2, y2] format
+        x1_A, y1_A, x2_A, y2_A = x_A, y_A, x_A + w_A, y_A + h_A
+        x1_B, y1_B, x2_B, y2_B = x_B, y_B, x_B + w_B, y_B + h_B
+        
+        # Calculate centers and dimensions
+        center_A_x = (x1_A + x2_A) / 2
+        center_A_y = (y1_A + y2_A) / 2
+        center_B_x = (x1_B + x2_B) / 2
+        center_B_y = (y1_B + y2_B) / 2
+        
+        width_A = x2_A - x1_A
+        height_A = y2_A - y1_A
+        width_B = x2_B - x1_B
+        height_B = y2_B - y1_B
+        
+        area_A = width_A * height_A
+        area_B = width_B * height_B
+        
+        # Use default normalization if not provided
+        img_w = image_width if image_width is not None else 1000.0
+        img_h = image_height if image_height is not None else 1000.0
+        
+        # 1. Horizontal gap (normalized)
+        horizontal_gap = abs(center_A_x - center_B_x) - (width_A + width_B) / 2
+        horizontal_gap_norm = horizontal_gap / img_w
+        
+        # 2. Height ratio
+        height_ratio = min(height_A, height_B) / max(height_A, height_B + 1e-6)
+        
+        # 3. Ground distance (normalized) - distance between bottom centers
+        ground_distance = abs(center_A_x - center_B_x) / img_w
+        
+        # 4. Vertical overlap
+        v_overlap = max(0.0, min(y2_A, y2_B) - max(y1_A, y1_B)) / min(height_A, height_B + 1e-6)
+        
+        # 5. Area ratio
+        area_ratio = min(area_A, area_B) / max(area_A, area_B + 1e-6)
+        
+        # 6. Center distance normalized
+        center_dist = torch.sqrt((center_A_x - center_B_x)**2 + (center_A_y - center_B_y)**2)
+        center_dist_norm = center_dist / torch.sqrt(area_A + area_B + 1e-6)
+        
+        # 7. Vertical distance ratio
+        vertical_gap = abs(center_A_y - center_B_y) / img_h
+        
+        # Combine features
+        feature_vector = torch.tensor([
+            horizontal_gap_norm,
+            height_ratio,
+            ground_distance,
+            v_overlap,
+            area_ratio,
+            center_dist_norm,
+            vertical_gap
+        ])
+        
+        features.append(feature_vector)
+    
+    result = torch.stack(features)
+    return result.squeeze(0) if result.size(0) == 1 else result
+
+
+def extract_causal_motion_features(geometric_history):
+    """
+    Extract causal motion features from geometric history
+    Only uses past information (t-n to t-1)
+    
+    Args:
+        geometric_history: [batch_size, time_steps, 7] or [time_steps, 7]
+        
+    Returns:
+        torch.Tensor: [batch_size, 4] or [4] motion features
+    """
+    if geometric_history.dim() == 2:
+        # Single sequence
+        geometric_history = geometric_history.unsqueeze(0)
+    
+    batch_size = geometric_history.size(0)
+    motion_features = []
+    
+    for batch_idx in range(batch_size):
+        batch_history = geometric_history[batch_idx]  # [time_steps, 7]
+        time_steps = batch_history.size(0)
+        
+        if time_steps < 2:
+            # Not enough history, return zero features
+            motion_features.append(torch.zeros(4))
+            continue
+        
+        # Extract distance changes over time
+        distance_trend = []
+        approach_speeds = []
+        
+        for t in range(1, time_steps):
+            # Use center_dist_norm (index 5)
+            prev_dist = batch_history[t-1, 5]
+            curr_dist = batch_history[t, 5]
+            
+            distance_change = curr_dist - prev_dist
+            distance_trend.append(distance_change.item())
+            approach_speeds.append(abs(distance_change.item()))
+        
+        # Calculate motion statistics
+        if len(distance_trend) > 0:
+            avg_approach_speed = np.mean(approach_speeds)
+            distance_trend_slope = distance_trend[-1]  # Latest trend
+            is_approaching = 1.0 if distance_trend_slope < -0.01 else 0.0
+            
+            # Motion consistency (lower std = more consistent)
+            if len(distance_trend) > 1:
+                motion_consistency = 1.0 - min(np.std(distance_trend), 1.0)
+            else:
+                motion_consistency = 1.0
+        else:
+            avg_approach_speed = 0.0
+            distance_trend_slope = 0.0
+            is_approaching = 0.0
+            motion_consistency = 1.0
+        
+        motion_feature = torch.tensor([
+            avg_approach_speed,
+            distance_trend_slope,
+            is_approaching,
+            motion_consistency
+        ])
+        
+        motion_features.append(motion_feature)
+    
+    result = torch.stack(motion_features)
+    return result.squeeze(0) if result.size(0) == 1 else result
+
+
+def compute_scene_context(all_boxes_in_frame, image_width=1000.0, image_height=1000.0):
+    """
+    Compute simplified scene context based on crowd level
+    
+    Args:
+        all_boxes_in_frame: List of bounding boxes in current frame
+        image_width, image_height: Image dimensions
+        
+    Returns:
+        torch.Tensor: [1] scene context - crowd level (0=empty, 1=sparse, 2=moderate, 3=crowded)
+    """
+    num_people = len(all_boxes_in_frame)
+    
+    # Simple crowd level classification
+    if num_people == 0:
+        crowd_level = 0.0    # Empty scene
+    elif num_people <= 2:
+        crowd_level = 1.0    # Sparse (1-2 people)
+    elif num_people <= 5:
+        crowd_level = 2.0    # Moderate (3-5 people) 
+    else:
+        crowd_level = 3.0    # Crowded (6+ people)
+    
+    return torch.tensor([crowd_level])
+
+
+if __name__ == '__main__':
+    # Test geometric features extraction
+    print("Testing Geometric Features Extraction...")
+    
+    # Test data
+    box_A = [100, 100, 200, 300]  # x1, y1, x2, y2
+    box_B = [180, 120, 280, 320]
+    
+    # Single pair test
+    features = extract_geometric_features(box_A, box_B, 640, 480)
+    print(f"Geometric features shape: {features.shape}")
+    print(f"Features: {features}")
+    
+    # Batch test
+    batch_box_A = torch.tensor([[100, 100, 200, 300], [50, 50, 150, 250]])
+    batch_box_B = torch.tensor([[180, 120, 280, 320], [200, 100, 300, 300]])
+    
+    batch_features = extract_geometric_features(batch_box_A, batch_box_B, 640, 480)
+    print(f"Batch features shape: {batch_features.shape}")
+    
+    # Test motion features
+    print("\nTesting Motion Features...")
+    history = torch.randn(5, 7)  # 5 time steps, 7 features
+    motion_feats = extract_causal_motion_features(history)
+    print(f"Motion features shape: {motion_feats.shape}")
+    print(f"Motion features: {motion_feats}")
+    
+    # Test scene context
+    print("\nTesting Scene Context...")
+    all_boxes = [[100, 100, 200, 300], [180, 120, 280, 320], [300, 200, 400, 400]]
+    context = compute_scene_context(all_boxes, 640, 480)
+    print(f"Scene context: {context}")
+    
+    print("All tests passed!")

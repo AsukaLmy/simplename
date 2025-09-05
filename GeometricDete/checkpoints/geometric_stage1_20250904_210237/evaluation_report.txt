@@ -1,0 +1,21 @@
+Geometric Stage1 Binary Classification Report
+==================================================
+
+Model Type: adaptive
+Best Validation Accuracy: 0.9661
+Best Validation F1: 0.9627
+
+Classification Report:
+                 precision    recall  f1-score   support
+
+ No Interaction       0.99      0.53      0.69     46730
+Has Interaction       0.95      1.00      0.98    460804
+
+       accuracy                           0.96    507534
+      macro avg       0.97      0.76      0.83    507534
+   weighted avg       0.96      0.96      0.95    507534
+
+
+Confusion Matrix:
+[[ 24649  22081]
+ [   226 460578]]

@@ -1,0 +1,27 @@
+{
+  "data_path": "../dataset",
+  "model_type": "adaptive",
+  "batch_size": 64,
+  "epochs": 50,
+  "learning_rate": 0.001,
+  "hidden_dims": [
+    32,
+    16
+  ],
+  "dropout": 0.1,
+  "early_stopping_patience": 10,
+  "num_workers": 4,
+  "history_length": 5,
+  "hidden_size": 16,
+  "num_ensemble_models": 3,
+  "weight_decay": 0.0001,
+  "optimizer": "adam",
+  "scheduler": "step",
+  "step_size": 10,
+  "weight_regularization": 0.01,
+  "sparsity_regularization": 0.01,
+  "max_grad_norm": 1.0,
+  "log_interval": 100,
+  "use_temporal": false,
+  "use_scene_context": true
+}
