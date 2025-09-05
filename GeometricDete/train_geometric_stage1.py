@@ -522,23 +522,70 @@ def main():
                         help='Logging interval')
     
     # Feature options
-    parser.add_argument('--use_temporal', action='store_true', default=True,
+    parser.add_argument('--use_temporal', action='store_true', default=False,
                         help='Use temporal features')
+    parser.add_argument('--no_temporal', dest='use_temporal', action='store_false',
+                        help='Disable temporal features (default)')
     parser.add_argument('--use_scene_context', action='store_true', default=True,
                         help='Use scene context features')
     
+    # Loading optimization parameters
+    parser.add_argument('--loading_strategy', type=str, default='lazy',
+                        choices=['cached', 'optimized', 'lazy', 'original'],
+                        help='Data loading strategy: cached (fastest), optimized (balanced), lazy (memory efficient), original (fallback)')
+    
     args = parser.parse_args()
     
-    # Create data loaders
-    print("Loading geometric data...")
-    train_loader, val_loader, test_loader = create_fast_geometric_data_loaders(
-        data_path=args.data_path,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        history_length=args.history_length,
-        use_temporal=args.use_temporal,
-        use_scene_context=args.use_scene_context
-    )
+    # Create data loaders with optimized loading
+    print("Loading geometric data with optimized loader...")
+    
+    # Choose loading strategy
+    loading_strategy = args.loading_strategy
+    
+    if loading_strategy == 'cached':
+        # Use pre-computed cache for maximum speed
+        from fast_temporal_cache import create_fast_cached_data_loaders
+        train_loader, val_loader, test_loader = create_fast_cached_data_loaders(
+            data_path=args.data_path,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            use_temporal=args.use_temporal,
+            use_scene_context=args.use_scene_context,
+            history_length=args.history_length
+        )
+    elif loading_strategy == 'optimized':
+        # Use optimized multi-process loader
+        from optimized_dataloader import create_optimized_data_loaders
+        train_loader, val_loader, test_loader = create_optimized_data_loaders(
+            data_path=args.data_path,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            use_temporal=args.use_temporal,
+            use_scene_context=args.use_scene_context
+        )
+    elif loading_strategy == 'lazy':
+        # Use lazy loading for memory efficiency
+        from lazy_temporal import create_lazy_data_loaders
+        train_loader, val_loader, test_loader = create_lazy_data_loaders(
+            data_path=args.data_path,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            use_temporal=args.use_temporal,
+            use_scene_context=args.use_scene_context
+        )
+    else:
+        # Fallback to original loader
+        from optimized_temporal_buffer import create_fast_geometric_data_loaders
+        train_loader, val_loader, test_loader = create_fast_geometric_data_loaders(
+            data_path=args.data_path,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            history_length=args.history_length,
+            use_temporal=args.use_temporal,
+            use_scene_context=args.use_scene_context
+        )
+    
+    print(f"Data loading strategy: {loading_strategy}")
     
     # Create trainer
     trainer = GeometricStage1Trainer(args)

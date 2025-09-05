@@ -48,8 +48,8 @@ class GeometricStage2Trainer:
         
         print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         
-        # 类别权重
-        class_weights = {0: 1.0, 1: 1.4, 2: 8.3, 3: 7.4, 4: 50.0}
+        # 类别权重 (4分类 - 方案A)
+        class_weights = {0: 1.0, 1: 1.4, 2: 5.3, 3: 4.4}
         
         # 损失函数
         self.criterion = Stage2Loss(
@@ -101,10 +101,12 @@ class GeometricStage2Trainer:
         self.best_val_acc = 0.0
         self.epochs_without_improvement = 0
         
-        # 类别名称
+        # 类别名称 (4分类)
         self.class_names = [
-            'Static Group', 'Parallel Movement', 'Approaching Interaction',
-            'Coordinated Activity', 'Complex/Rare Behaviors'
+            'Moving',           # 移动行为 (46.9%)
+            'Stationary',       # 静态行为 (33.7%)
+            'Communicating',    # 交流行为 (8.8%)
+            'Others'            # 其他行为 (10.6%)
         ]
     
     def train_epoch(self, train_loader, epoch):
@@ -260,11 +262,24 @@ class GeometricStage2Trainer:
                 else:
                     self.scheduler.step()
             
-            # 检查改进（以MPCA为主要指标）
-            improved = val_mpca > self.best_val_mpca
+            # 检查改进（支持多种指标）
+            if self.config.early_stopping_metric == 'mpca':
+                improved = val_mpca > self.best_val_mpca
+                best_metric = self.best_val_mpca
+            elif self.config.early_stopping_metric == 'accuracy':
+                improved = val_acc > self.best_val_acc
+                best_metric = self.best_val_acc
+            else:  # loss
+                improved = val_loss < getattr(self, 'best_val_loss', float('inf'))
+                if not hasattr(self, 'best_val_loss'):
+                    self.best_val_loss = float('inf')
+                best_metric = self.best_val_loss
+            
             if improved:
                 self.best_val_mpca = val_mpca
                 self.best_val_acc = val_acc
+                if self.config.early_stopping_metric == 'loss':
+                    self.best_val_loss = val_loss
                 self.epochs_without_improvement = 0
                 
                 # 保存最佳模型
@@ -281,7 +296,7 @@ class GeometricStage2Trainer:
             
             # Early stopping
             if self.epochs_without_improvement >= self.config.early_stopping_patience:
-                print(f'Early stopping triggered after {epoch} epochs (no MPCA improvement for {self.config.early_stopping_patience} epochs)')
+                print(f'Early stopping triggered after {epoch} epochs (no {self.config.early_stopping_metric} improvement for {self.config.early_stopping_patience} epochs)')
                 break
             
             # 保存周期性检查点
@@ -465,16 +480,19 @@ def main():
                         help='Step size for step scheduler')
     
     # 损失函数参数
-    parser.add_argument('--mpca_weight', type=float, default=0.1,
-                        help='MPCA regularization weight')
-    parser.add_argument('--acc_weight', type=float, default=0.05,
-                        help='Accuracy regularization weight')
+    parser.add_argument('--mpca_weight', type=float, default=0.03,
+                        help='MPCA regularization weight (降低从0.1到0.03)')
+    parser.add_argument('--acc_weight', type=float, default=0.01,
+                        help='Accuracy regularization weight (降低从0.05到0.01)')
     parser.add_argument('--max_grad_norm', type=float, default=1.0,
                         help='Maximum gradient norm for clipping')
     
     # 训练控制
-    parser.add_argument('--early_stopping_patience', type=int, default=20,
-                        help='Early stopping patience')
+    parser.add_argument('--early_stopping_patience', type=int, default=15,
+                        help='Early stopping patience (降低从20到15)')
+    parser.add_argument('--early_stopping_metric', type=str, default='mpca',
+                        choices=['loss', 'accuracy', 'mpca'], 
+                        help='Early stopping metric (建议使用mpca)')
     parser.add_argument('--log_interval', type=int, default=10,
                         help='Logging interval')
     

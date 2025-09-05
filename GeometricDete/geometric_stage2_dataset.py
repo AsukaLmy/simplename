@@ -23,69 +23,64 @@ def _get_frame_id_sort_key(sample):
 
 
 class Stage2LabelMapper:
-    """Stage2的5分类标签映射器"""
+    """Stage2的4分类标签映射器 - 方案A: 前3类+Others"""
     
     def __init__(self):
         self.label_mapping = {
-            # Static Group (0) - 静态群体
-            'standing together': 0,
-            'sitting together': 0, 
-            'conversation': 0,  # 确认为static
-            'eating together': 0,
+            # Moving (0) - 移动行为 (walking together: 46.9%)
+            'walking together': 0,
             
-            # Parallel Movement (1) - 并行运动
-            'walking together': 1,
-            'moving together': 1,
-            'cycling together': 1,
-            'going upstairs together': 1,
-            'going downstairs together': 1,
+            # Stationary (1) - 静态行为 (standing together: 33.7%)  
+            'standing together': 1,
             
-            # Approaching Interaction (2) - 接近交互
-            'walking toward each other': 2,
-            'hugging': 2,
-            'shaking hand': 2,
+            # Communicating (2) - 交流行为 (conversation: 8.8%)
+            'conversation': 2,
             
-            # Coordinated Activity (3) - 协调活动
+            # Others (3) - 其他所有行为 (10.6%)
+            'sitting together': 3,
+            'going upstairs together': 3,
+            'moving together': 3,
             'looking at robot together': 3,
             'looking at sth together': 3,
+            'walking toward each other': 3,
+            'eating together': 3,
+            'going downstairs together': 3,
             'bending together': 3,
             'holding sth together': 3,
-            'waving hand together': 3,
+            'cycling together': 3,
+            'interaction with door together': 3,
+            'hugging': 3,
             'looking into sth together': 3,
-            
-            # Complex/Rare (4) - 复杂罕见行为
-            'interaction with door together': 4
+            'shaking hand': 3,
+            'waving hand together': 3
         }
         
         self.class_names = [
-            'Static Group',
-            'Parallel Movement', 
-            'Approaching Interaction',
-            'Coordinated Activity',
-            'Complex/Rare Behaviors'
+            'Moving',           # 移动行为 (46.9%)
+            'Stationary',       # 静态行为 (33.7%)
+            'Communicating',    # 交流行为 (8.8%)
+            'Others'            # 其他行为 (10.6%)
         ]
         
-        # 预计算类别权重 (基于JRDB分布)
+        # 基于新分布的类别权重
         self.class_weights = {
-            0: 1.0,    # Static Group (66.3%)
-            1: 1.4,    # Parallel Movement (48.1%)
-            2: 8.3,    # Approaching (0.8%)
-            3: 7.4,    # Coordinated (0.9%)  
-            4: 50.0    # Rare (0.2%)
+            0: 1.0,    # Moving (46.9%) - 基准
+            1: 1.4,    # Stationary (33.7%) - 轻微提升
+            2: 5.3,    # Communicating (8.8%) - 较大提升
+            3: 4.4     # Others (10.6%) - 中等提升
         }
         
-        # 目标类别分布 (用于过采样)
+        # 目标类别分布 (更平衡)
         self.target_distribution = {
-            0: 0.35,  # 降低dominant class比例
-            1: 0.35,  # 保持较高比例
-            2: 0.10,  # 提升少数类
-            3: 0.10,  # 提升少数类
-            4: 0.10   # 提升罕见类
+            0: 0.40,  # Moving - 保持主导但不过分
+            1: 0.35,  # Stationary - 保持较高比例
+            2: 0.15,  # Communicating - 提升少数类
+            3: 0.10   # Others - 适度提升
         }
     
     def map_label(self, original_interaction):
-        """将原始交互标签映射为5分类标签"""
-        return self.label_mapping.get(original_interaction, 4)  # 未知类型归为4
+        """将原始交互标签映射为4分类标签"""
+        return self.label_mapping.get(original_interaction, 3)  # 未知类型归为Others(3)
     
     def get_mapped_class_name(self, class_id):
         """获取映射后的类别名"""
@@ -156,9 +151,9 @@ def extract_enhanced_motion_features(person_A_history, person_B_history):
     
     if torch.std(vel_A_flat) > 1e-6 and torch.std(vel_B_flat) > 1e-6:
         velocity_corr = torch.corrcoef(torch.stack([vel_A_flat, vel_B_flat]))[0, 1]
-        velocity_corr = torch.nan_to_num(velocity_corr, 0.0)  # 处理NaN
+        velocity_corr = torch.nan_to_num(velocity_corr, 0.0).float()  # 转换为float32
     else:
-        velocity_corr = torch.tensor(0.0)
+        velocity_corr = torch.tensor(0.0, dtype=torch.float32)
     features.append(velocity_corr)
     
     # 2. direction_alignment - 方向对齐度
@@ -172,7 +167,7 @@ def extract_enhanced_motion_features(person_A_history, person_B_history):
         alignment = torch.dot(dir_A, dir_B)
         direction_alignments.append(alignment)
     
-    avg_direction_alignment = torch.mean(torch.tensor(direction_alignments))
+    avg_direction_alignment = torch.mean(torch.tensor(direction_alignments, dtype=torch.float32))
     features.append(avg_direction_alignment)
     
     # 3. acceleration_sync - 加速度同步性
@@ -186,11 +181,11 @@ def extract_enhanced_motion_features(person_A_history, person_B_history):
         
         if torch.std(acc_mag_A) > 1e-6 and torch.std(acc_mag_B) > 1e-6:
             acc_sync = torch.corrcoef(torch.stack([acc_mag_A, acc_mag_B]))[0, 1]
-            acc_sync = torch.nan_to_num(acc_sync, 0.0)
+            acc_sync = torch.nan_to_num(acc_sync, 0.0).float()  # 转换为float32
         else:
-            acc_sync = torch.tensor(0.0)
+            acc_sync = torch.tensor(0.0, dtype=torch.float32)
     else:
-        acc_sync = torch.tensor(0.0)
+        acc_sync = torch.tensor(0.0, dtype=torch.float32)
     features.append(acc_sync)
     
     # 4. stopping_frequency - 停顿频率
@@ -222,7 +217,7 @@ def extract_enhanced_motion_features(person_A_history, person_B_history):
         trajectory_dist = torch.mean(torch.norm(traj_A - traj_B, dim=1))
         trajectory_similarity = 1.0 / (trajectory_dist + 0.1)
     else:
-        trajectory_similarity = torch.tensor(0.0)
+        trajectory_similarity = torch.tensor(0.0, dtype=torch.float32)
     features.append(trajectory_similarity)
     
     # 6. relative_speed - 相对速度大小
@@ -231,7 +226,7 @@ def extract_enhanced_motion_features(person_A_history, person_B_history):
         rel_vel = vel_A[i] - vel_B[i]
         relative_speeds.append(torch.norm(rel_vel))
     
-    avg_relative_speed = torch.mean(torch.tensor(relative_speeds))
+    avg_relative_speed = torch.mean(torch.tensor(relative_speeds, dtype=torch.float32))
     features.append(avg_relative_speed)
     
     # 7. movement_consistency - 运动一致性
@@ -252,9 +247,9 @@ def extract_enhanced_motion_features(person_A_history, person_B_history):
         for i in range(1, len(distances)):
             distance_changes.append(distances[i] - distances[i-1])
         
-        proximity_change_rate = torch.mean(torch.tensor(distance_changes))
+        proximity_change_rate = torch.mean(torch.tensor(distance_changes, dtype=torch.float32))
     else:
-        proximity_change_rate = torch.tensor(0.0)
+        proximity_change_rate = torch.tensor(0.0, dtype=torch.float32)
     features.append(proximity_change_rate)
     
     return torch.tensor(features, dtype=torch.float32)
@@ -324,7 +319,7 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
     def _apply_oversampling(self):
         """应用过采样策略平衡类别"""
         # 统计各类样本数量
-        class_samples = {i: [] for i in range(5)}
+        class_samples = {i: [] for i in range(4)}  # 改为4类
         for sample in self.samples:
             label = sample['stage2_label']
             class_samples[label].append(sample)
@@ -425,7 +420,7 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
         if self.use_scene_context and frame_id in self.scene_data:
             scene_context = self.scene_data[frame_id]['scene_context']
         else:
-            scene_context = torch.tensor([1.0])  # 默认：稀疏场景
+            scene_context = torch.tensor([1.0], dtype=torch.float32)  # 默认：稀疏场景
         
         # 组合成16维特征向量
         # [7几何 + 4基础运动 + 8增强时序 + 1场景] = 20维，但我们说好16维，调整一下
@@ -436,7 +431,7 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
             geometric_features,                    # [7]
             motion_features,                      # [4] 
             enhanced_motion_features_reduced      # [5]
-        ])  # [16]
+        ]).float()  # [16] 确保float32类型
         
         return {
             'features': full_features,

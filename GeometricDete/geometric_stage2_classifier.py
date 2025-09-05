@@ -13,9 +13,9 @@ from typing import Dict, Optional, Tuple
 
 class GeometricStage2Classifier(nn.Module):
     """
-    专门为5类行为分类设计的几何+时序特征分类器
+    专门为4类行为分类设计的几何+时序特征分类器 (方案A)
     输入：16维特征 (7几何 + 4基础运动 + 5增强时序)
-    输出：5类行为分类
+    输出：4类行为分类 (Moving, Stationary, Communicating, Others)
     """
     
     def __init__(self, input_dim=16, hidden_dims=[64, 32, 16], dropout=0.2, use_attention=True):
@@ -32,21 +32,18 @@ class GeometricStage2Classifier(nn.Module):
         # 分组特征处理器
         self.geometric_processor = nn.Sequential(
             nn.Linear(self.geometric_dim, 16),
-            nn.BatchNorm1d(16),
             nn.ReLU(),
             nn.Dropout(dropout)
         )
         
         self.basic_motion_processor = nn.Sequential(
             nn.Linear(self.basic_motion_dim, 8),
-            nn.BatchNorm1d(8),
             nn.ReLU(),
             nn.Dropout(dropout)
         )
         
         self.enhanced_motion_processor = nn.Sequential(
             nn.Linear(self.enhanced_motion_dim, 16),
-            nn.BatchNorm1d(16),
             nn.ReLU(),
             nn.Dropout(dropout)
         )
@@ -55,7 +52,6 @@ class GeometricStage2Classifier(nn.Module):
         fusion_dim = 16 + 8 + 16  # 40
         self.fusion_layer = nn.Sequential(
             nn.Linear(fusion_dim, hidden_dims[0]),
-            nn.BatchNorm1d(hidden_dims[0]),
             nn.ReLU(),
             nn.Dropout(dropout)
         )
@@ -73,13 +69,12 @@ class GeometricStage2Classifier(nn.Module):
         for hidden_dim in hidden_dims[1:]:
             layers.extend([
                 nn.Linear(in_dim, hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
                 nn.ReLU(),
                 nn.Dropout(dropout)
             ])
             in_dim = hidden_dim
         
-        layers.append(nn.Linear(in_dim, 5))  # 5类分类
+        layers.append(nn.Linear(in_dim, 4))  # 4类分类 (方案A)
         self.classifier = nn.Sequential(*layers)
         
         # 初始化权重
@@ -92,16 +87,13 @@ class GeometricStage2Classifier(nn.Module):
                 nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
-            elif isinstance(module, nn.BatchNorm1d):
-                nn.init.ones_(module.weight)
-                nn.init.zeros_(module.bias)
     
     def forward(self, features):
         """
         Args:
             features: [batch_size, 16] 完整特征向量
         Returns:
-            [batch_size, 5] 分类logits
+            [batch_size, 4] 分类logits
         """
         batch_size = features.size(0)
         
@@ -129,7 +121,7 @@ class GeometricStage2Classifier(nn.Module):
             fusion_output = attended_features.squeeze(1)  # [batch, hidden_dims[0]]
         
         # 最终分类
-        logits = self.classifier(fusion_output)  # [batch, 5]
+        logits = self.classifier(fusion_output)  # [batch, 4]
         
         return logits
     
@@ -150,7 +142,7 @@ class GeometricStage2Classifier(nn.Module):
         
         # 计算各类的梯度
         importance_scores = {}
-        for class_id in range(5):
+        for class_id in range(4):  # 4类分析
             # 计算对该类的梯度
             class_score = logits[:, class_id].sum()
             grads = torch.autograd.grad(class_score, features, retain_graph=True)[0]
@@ -201,7 +193,7 @@ class Stage2Loss(nn.Module):
             pred_classes = torch.argmax(predictions, dim=1)
             per_class_acc = []
             
-            for class_id in range(5):
+            for class_id in range(4):  # 4类评估
                 mask = targets == class_id
                 if mask.sum() > 0:
                     class_acc = (pred_classes[mask] == targets[mask]).float().mean()

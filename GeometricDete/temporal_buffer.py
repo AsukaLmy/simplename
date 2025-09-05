@@ -7,6 +7,18 @@ def _create_deque(maxlen):
     """Helper function to create deque with maxlen (pickle-friendly)"""
     return deque(maxlen=maxlen)
 
+def _extract_frame_number(frame_id):
+    """Extract numeric frame number from frame_id string"""
+    try:
+        # JRDB format: "scene_name_000001" -> 000001
+        parts = frame_id.split('_')
+        return int(parts[-1])
+    except (ValueError, IndexError):
+        # Fallback: try to extract any digits from the string
+        import re
+        numbers = re.findall(r'\d+', frame_id)
+        return int(numbers[-1]) if numbers else 0
+
 class CausalTemporalBuffer:
     """
     Buffer for maintaining causal temporal history of person tracks
@@ -69,14 +81,16 @@ class CausalTemporalBuffer:
         
         # Check if track is too old
         if (person_id in self.last_seen_frame and 
-            current_frame_id - self.last_seen_frame[person_id] > self.max_gap_frames):
+            _extract_frame_number(current_frame_id) - _extract_frame_number(self.last_seen_frame[person_id]) > self.max_gap_frames):
             self.cache_misses += 1
             return torch.zeros(self.history_length, 7)
         
         # Extract features from past frames only
         valid_features = []
+        current_frame_num = _extract_frame_number(current_frame_id)
         for frame_id, features in track_history:
-            if frame_id < current_frame_id:  # Causal constraint: only past frames
+            frame_num = _extract_frame_number(frame_id)
+            if frame_num < current_frame_num:  # Causal constraint: only past frames
                 valid_features.append(features)
         
         if len(valid_features) == 0:
@@ -114,7 +128,8 @@ class CausalTemporalBuffer:
             return False
         
         track_history = self.person_tracks[person_id]
-        valid_count = sum(1 for frame_id, _ in track_history if frame_id < current_frame_id)
+        current_frame_num = _extract_frame_number(current_frame_id)
+        valid_count = sum(1 for frame_id, _ in track_history if _extract_frame_number(frame_id) < current_frame_num)
         
         return valid_count >= self.min_history
     
@@ -126,17 +141,19 @@ class CausalTemporalBuffer:
         return (self.has_sufficient_history(person_A_id, current_frame_id) and 
                 self.has_sufficient_history(person_B_id, current_frame_id))
     
-    def cleanup_old_tracks(self, current_frame_id: int, max_age: int = 30):
+    def cleanup_old_tracks(self, current_frame_id, max_age: int = 30):
         """
         Remove old tracks to prevent memory leak
         
         Args:
-            current_frame_id: Current frame number
+            current_frame_id: Current frame ID (string format)
             max_age: Maximum age in frames before removing track
         """
         to_remove = []
+        current_frame_num = _extract_frame_number(current_frame_id)
         for person_id, last_frame in self.last_seen_frame.items():
-            if current_frame_id - last_frame > max_age:
+            last_frame_num = _extract_frame_number(last_frame)
+            if current_frame_num - last_frame_num > max_age:
                 to_remove.append(person_id)
         
         for person_id in to_remove:
@@ -262,8 +279,10 @@ class TemporalPairManager:
         
         if pair_key in self.pair_history:
             # Extract features from past frames only
+            current_frame_num = _extract_frame_number(self.current_frame_id)
             for frame_id, features in self.pair_history[pair_key]:
-                if frame_id < self.current_frame_id:
+                frame_num = _extract_frame_number(frame_id)
+                if frame_num < current_frame_num:
                     pair_interactions.append(features)
         
         if len(pair_interactions) > 0:
@@ -285,10 +304,11 @@ class TemporalPairManager:
         
         # Clean up pair history
         to_remove = []
+        current_frame_num = _extract_frame_number(self.current_frame_id)
         for pair_key, interactions in self.pair_history.items():
             # Remove old interactions
             recent_interactions = [(fid, feats) for fid, feats in interactions 
-                                 if self.current_frame_id - fid <= max_age]
+                                 if current_frame_num - _extract_frame_number(fid) <= max_age]
             if recent_interactions:
                 self.pair_history[pair_key] = recent_interactions
             else:
