@@ -2,13 +2,13 @@ import torch
 import numpy as np
 import math
 
-def extract_geometric_features(box_A, box_B, image_width=None, image_height=None):
+def extract_geometric_features(box_A, box_B, image_width=3760, image_height=480):
     """
     Extract 7 core geometric features from two person bounding boxes
     
     Args:
-        box_A, box_B: torch.Tensor or list [x1, y1, x2, y2] format
-        image_width, image_height: normalization parameters
+        box_A, box_B: torch.Tensor or list [x, y, width, height] format (JRDB format)
+        image_width, image_height: normalization parameters (default: JRDB 3760×480)
         
     Returns:
         torch.Tensor: [7] geometric features
@@ -35,11 +35,21 @@ def extract_geometric_features(box_A, box_B, image_width=None, image_height=None
         x1_A, y1_A, x2_A, y2_A = x_A, y_A, x_A + w_A, y_A + h_A
         x1_B, y1_B, x2_B, y2_B = x_B, y_B, x_B + w_B, y_B + h_B
         
+        # Use default normalization if not provided
+        img_w = image_width if image_width is not None else 1000.0
+        img_h = image_height if image_height is not None else 1000.0
+        
         # Calculate centers and dimensions
         center_A_x = (x1_A + x2_A) / 2
         center_A_y = (y1_A + y2_A) / 2
         center_B_x = (x1_B + x2_B) / 2
         center_B_y = (y1_B + y2_B) / 2
+        
+        # Handle panoramic image boundary wraparound
+        # Calculate horizontal distance considering wraparound
+        dx_direct = abs(center_A_x - center_B_x)
+        dx_wraparound = img_w - dx_direct  # Distance through wraparound
+        dx_actual = min(dx_direct, dx_wraparound)  # Use shorter distance
         
         width_A = x2_A - x1_A
         height_A = y2_A - y1_A
@@ -49,19 +59,15 @@ def extract_geometric_features(box_A, box_B, image_width=None, image_height=None
         area_A = width_A * height_A
         area_B = width_B * height_B
         
-        # Use default normalization if not provided
-        img_w = image_width if image_width is not None else 1000.0
-        img_h = image_height if image_height is not None else 1000.0
-        
-        # 1. Horizontal gap (normalized)
-        horizontal_gap = abs(center_A_x - center_B_x) - (width_A + width_B) / 2
+        # 1. Horizontal gap (normalized) - considering panoramic wraparound
+        horizontal_gap = dx_actual - (width_A + width_B) / 2
         horizontal_gap_norm = horizontal_gap / img_w
         
         # 2. Height ratio
         height_ratio = min(height_A, height_B) / max(height_A, height_B + 1e-6)
         
-        # 3. Ground distance (normalized) - distance between bottom centers
-        ground_distance = abs(center_A_x - center_B_x) / img_w
+        # 3. Ground distance (normalized) - using actual distance with wraparound
+        ground_distance = dx_actual / img_w
         
         # 4. Vertical overlap
         v_overlap = max(0.0, min(y2_A, y2_B) - max(y1_A, y1_B)) / min(height_A, height_B + 1e-6)
@@ -69,8 +75,8 @@ def extract_geometric_features(box_A, box_B, image_width=None, image_height=None
         # 5. Area ratio
         area_ratio = min(area_A, area_B) / max(area_A, area_B + 1e-6)
         
-        # 6. Center distance normalized
-        center_dist = torch.sqrt((center_A_x - center_B_x)**2 + (center_A_y - center_B_y)**2)
+        # 6. Center distance normalized - considering panoramic wraparound
+        center_dist = torch.sqrt(dx_actual**2 + (center_A_y - center_B_y)**2)
         center_dist_norm = center_dist / torch.sqrt(area_A + area_B + 1e-6)
         
         # 7. Vertical distance ratio
@@ -198,7 +204,7 @@ if __name__ == '__main__':
     box_B = [180, 120, 280, 320]
     
     # Single pair test
-    features = extract_geometric_features(box_A, box_B, 640, 480)
+    features = extract_geometric_features(box_A, box_B, 3760, 480)
     print(f"Geometric features shape: {features.shape}")
     print(f"Features: {features}")
     
@@ -206,7 +212,7 @@ if __name__ == '__main__':
     batch_box_A = torch.tensor([[100, 100, 200, 300], [50, 50, 150, 250]])
     batch_box_B = torch.tensor([[180, 120, 280, 320], [200, 100, 300, 300]])
     
-    batch_features = extract_geometric_features(batch_box_A, batch_box_B, 640, 480)
+    batch_features = extract_geometric_features(batch_box_A, batch_box_B, 3760, 480)
     print(f"Batch features shape: {batch_features.shape}")
     
     # Test motion features
@@ -219,7 +225,7 @@ if __name__ == '__main__':
     # Test scene context
     print("\nTesting Scene Context...")
     all_boxes = [[100, 100, 200, 300], [180, 120, 280, 320], [300, 200, 400, 400]]
-    context = compute_scene_context(all_boxes, 640, 480)
+    context = compute_scene_context(all_boxes, 3760, 480)
     print(f"Scene context: {context}")
     
     print("All tests passed!")

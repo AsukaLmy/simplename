@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Training script for Stage2 geometric behavior classification
-5-class behavior classification using 16D geometric+temporal features
+3-class behavior classification using 80D geometric+temporal+Hog features
 """
 
 import torch
@@ -38,9 +38,18 @@ class GeometricStage2Trainer:
         with open(os.path.join(self.save_dir, 'config.json'), 'w') as f:
             json.dump(vars(config), f, indent=2)
         
-        # 初始化模型
+        # 初始化模型（动态输入维度）
+        # 计算输入维度：7几何 + 64HoG + 可选时序
+        input_dim = 7  # 几何特征
+        if hasattr(config, 'use_hog_features') and config.use_hog_features:
+            input_dim += 64  # HoG特征
+        if config.use_temporal:
+            input_dim += 9   # 时序特征 (4基础 + 5增强)
+        
+        print(f"Model input dimension: {input_dim}")
+        
         self.model = GeometricStage2Classifier(
-            input_dim=16,
+            input_dim=input_dim,
             hidden_dims=config.hidden_dims,
             dropout=config.dropout,
             use_attention=config.use_attention
@@ -48,8 +57,8 @@ class GeometricStage2Trainer:
         
         print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         
-        # 类别权重 (4分类 - 方案A)
-        class_weights = {0: 1.0, 1: 1.4, 2: 5.3, 3: 4.4}
+        # 类别权重 (3分类 - 基础行为类别)
+        class_weights = {0: 1.0, 1: 1.4, 2: 6.1}
         
         # 损失函数
         self.criterion = Stage2Loss(
@@ -101,12 +110,11 @@ class GeometricStage2Trainer:
         self.best_val_acc = 0.0
         self.epochs_without_improvement = 0
         
-        # 类别名称 (4分类)
+        # 类别名称 (3分类)
         self.class_names = [
-            'Moving',           # 移动行为 (46.9%)
-            'Stationary',       # 静态行为 (33.7%)
-            'Communicating',    # 交流行为 (8.8%)
-            'Others'            # 其他行为 (10.6%)
+            'Walking Together',   # 移动行为
+            'Standing Together',  # 站立行为
+            'Sitting Together'    # 坐着行为
         ]
     
     def train_epoch(self, train_loader, epoch):
@@ -196,8 +204,9 @@ class GeometricStage2Trainer:
         avg_loss = total_loss / len(val_loader)
         
         # 计算详细评估指标
+
         metrics = evaluator.compute_metrics()
-        val_acc = metrics.get('overall_accuracy', 0.0)
+        val_acc = metrics.get('overall_accuracy', 0.0)  # ✅ 使用get()安全访问
         val_mpca = metrics.get('mpca', 0.0)
         
         return avg_loss, val_acc, val_mpca, metrics
@@ -270,9 +279,9 @@ class GeometricStage2Trainer:
                 improved = val_acc > self.best_val_acc
                 best_metric = self.best_val_acc
             else:  # loss
-                improved = val_loss < getattr(self, 'best_val_loss', float('inf'))
                 if not hasattr(self, 'best_val_loss'):
-                    self.best_val_loss = float('inf')
+                    self.best_val_loss = float('inf')  # ✅ 只在首次初始化
+                improved = val_loss < self.best_val_loss  # ✅ 使用已初始化的值比较
                 best_metric = self.best_val_loss
             
             if improved:
@@ -347,8 +356,8 @@ class GeometricStage2Trainer:
             f.write("Stage2 Behavior Classification Report\n")
             f.write("=" * 50 + "\n\n")
             f.write(f"Model: GeometricStage2Classifier\n")
-            f.write(f"Features: 16D (7 geometric + 4 basic motion + 5 enhanced temporal)\n")
-            f.write(f"Classes: 5 behavior categories\n")
+            f.write(f"Features: {self.model.input_dim}D (7 geometric + {'64 HoG + ' if self.config.use_hog_features else ''}{'9 temporal' if self.config.use_temporal else ''})\n")
+            f.write(f"Classes: 3 basic behavior categories\n")
             f.write(f"Best Validation MPCA: {self.best_val_mpca:.4f}\n")
             f.write(f"Best Validation Accuracy: {self.best_val_acc:.4f}\n\n")
             
@@ -497,10 +506,14 @@ def main():
                         help='Logging interval')
     
     # 特征选项
-    parser.add_argument('--use_temporal', action='store_true', default=True,
-                        help='Use temporal features')
+    parser.add_argument('--use_temporal', action='store_true', default=False,
+                        help='Use temporal features (默认禁用以测试)')
+    parser.add_argument('--no_temporal', dest='use_temporal', action='store_false',
+                        help='Disable temporal features')
     parser.add_argument('--use_scene_context', action='store_true', default=True,
                         help='Use scene context features')
+    parser.add_argument('--use_hog_features', action='store_true', default=True,
+                        help='Use HoG features for visual information')
     
     args = parser.parse_args()
     
@@ -512,7 +525,8 @@ def main():
         num_workers=args.num_workers,
         history_length=args.history_length,
         use_temporal=args.use_temporal,
-        use_scene_context=args.use_scene_context
+        use_scene_context=args.use_scene_context,
+        use_hog_features=args.use_hog_features
     )
     
     # 创建训练器

@@ -12,7 +12,8 @@ from geometric_stage2_dataset import GeometricStage2Dataset
 
 
 def create_fast_stage2_data_loaders(data_path, batch_size=64, num_workers=2, 
-                                   history_length=5, use_temporal=True, use_scene_context=True):
+                                   history_length=5, use_temporal=True, use_scene_context=True,
+                                   use_hog_features=True):
     """
     创建优化的Stage2数据加载器
     
@@ -23,6 +24,7 @@ def create_fast_stage2_data_loaders(data_path, batch_size=64, num_workers=2,
         history_length: 时序历史长度
         use_temporal: 是否使用时序特征
         use_scene_context: 是否使用场景上下文
+        use_hog_features: 是否使用HoG特征
         
     Returns:
         train_loader, val_loader, test_loader
@@ -36,7 +38,8 @@ def create_fast_stage2_data_loaders(data_path, batch_size=64, num_workers=2,
         data_path, split='train', history_length=history_length,
         use_temporal=False,  # 初始化时禁用时序
         use_scene_context=use_scene_context,
-        use_oversampling=True
+        use_oversampling=True,
+        use_hog_features=use_hog_features
     )
     
     print("Loading validation dataset...")
@@ -44,7 +47,8 @@ def create_fast_stage2_data_loaders(data_path, batch_size=64, num_workers=2,
         data_path, split='val', history_length=history_length,
         use_temporal=False,
         use_scene_context=use_scene_context,
-        use_oversampling=False
+        use_oversampling=False,
+        use_hog_features=use_hog_features
     )
     
     print("Loading test dataset...")
@@ -52,7 +56,8 @@ def create_fast_stage2_data_loaders(data_path, batch_size=64, num_workers=2,
         data_path, split='test', history_length=history_length,
         use_temporal=False,
         use_scene_context=use_scene_context,
-        use_oversampling=False
+        use_oversampling=False,
+        use_hog_features=use_hog_features
     )
     
     # 如果需要时序特征，再启用

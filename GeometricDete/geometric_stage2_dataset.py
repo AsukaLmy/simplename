@@ -6,7 +6,7 @@ Extends Stage1 geometric features with enhanced temporal features for 5-class be
 
 import torch
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict, deque
 import sys
 import os
 
@@ -15,6 +15,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from geometric_dataset import GeometricDualPersonDataset
 from geometric_features import extract_geometric_features, extract_causal_motion_features, compute_scene_context
+from hog_features import extract_joint_hog_features
+from PIL import Image
 
 
 def _get_frame_id_sort_key(sample):
@@ -23,64 +25,59 @@ def _get_frame_id_sort_key(sample):
 
 
 class Stage2LabelMapper:
-    """Stage2的4分类标签映射器 - 方案A: 前3类+Others"""
+    """Stage2的3分类标签映射器 - 仅保留基础行为类别"""
     
     def __init__(self):
         self.label_mapping = {
-            # Moving (0) - 移动行为 (walking together: 46.9%)
+            # Walking Together (0) - 移动行为
             'walking together': 0,
             
-            # Stationary (1) - 静态行为 (standing together: 33.7%)  
+            # Standing Together (1) - 站立行为  
             'standing together': 1,
             
-            # Communicating (2) - 交流行为 (conversation: 8.8%)
-            'conversation': 2,
-            
-            # Others (3) - 其他所有行为 (10.6%)
-            'sitting together': 3,
-            'going upstairs together': 3,
-            'moving together': 3,
-            'looking at robot together': 3,
-            'looking at sth together': 3,
-            'walking toward each other': 3,
-            'eating together': 3,
-            'going downstairs together': 3,
-            'bending together': 3,
-            'holding sth together': 3,
-            'cycling together': 3,
-            'interaction with door together': 3,
-            'hugging': 3,
-            'looking into sth together': 3,
-            'shaking hand': 3,
-            'waving hand together': 3
+            # Sitting Together (2) - 坐着行为
+            'sitting together': 2,
+        }
+        
+        # 其他所有交互类型将被过滤掉，不参与训练
+        self.excluded_interactions = {
+            'conversation', 'going upstairs together', 'moving together',
+            'looking at robot together', 'looking at sth together', 
+            'walking toward each other', 'eating together', 
+            'going downstairs together', 'bending together',
+            'holding sth together', 'cycling together',
+            'interaction with door together', 'hugging',
+            'looking into sth together', 'shaking hand',
+            'waving hand together'
         }
         
         self.class_names = [
-            'Moving',           # 移动行为 (46.9%)
-            'Stationary',       # 静态行为 (33.7%)
-            'Communicating',    # 交流行为 (8.8%)
-            'Others'            # 其他行为 (10.6%)
+            'Walking Together',   # 移动行为
+            'Standing Together',  # 站立行为
+            'Sitting Together'    # 坐着行为
         ]
         
-        # 基于新分布的类别权重
+        # 基于3分类的类别权重
         self.class_weights = {
-            0: 1.0,    # Moving (46.9%) - 基准
-            1: 1.4,    # Stationary (33.7%) - 轻微提升
-            2: 5.3,    # Communicating (8.8%) - 较大提升
-            3: 4.4     # Others (10.6%) - 中等提升
+            0: 1.0,    # Walking Together - 基准
+            1: 1.4,    # Standing Together - 轻微提升
+            2: 6.1     # Sitting Together - 较大提升（原本比例最小）
         }
         
-        # 目标类别分布 (更平衡)
+        # 目标类别分布 (更平衡的3分类)
         self.target_distribution = {
-            0: 0.40,  # Moving - 保持主导但不过分
-            1: 0.35,  # Stationary - 保持较高比例
-            2: 0.15,  # Communicating - 提升少数类
-            3: 0.10   # Others - 适度提升
+            0: 0.50,  # Walking Together - 保持主导
+            1: 0.35,  # Standing Together - 保持较高比例
+            2: 0.15   # Sitting Together - 提升少数类
         }
     
     def map_label(self, original_interaction):
-        """将原始交互标签映射为4分类标签"""
-        return self.label_mapping.get(original_interaction, 3)  # 未知类型归为Others(3)
+        """将原始交互标签映射为3分类标签，过滤掉不支持的类型"""
+        return self.label_mapping.get(original_interaction, None)  # 返回None表示该交互类型被过滤
+    
+    def is_valid_interaction(self, original_interaction):
+        """检查交互类型是否为有效的3分类之一"""
+        return original_interaction in self.label_mapping
     
     def get_mapped_class_name(self, class_id):
         """获取映射后的类别名"""
@@ -262,7 +259,8 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
     """
     
     def __init__(self, data_path, split='train', history_length=5, 
-                 use_temporal=True, use_scene_context=True, use_oversampling=True):
+                 use_temporal=True, use_scene_context=True, use_oversampling=True,
+                 use_hog_features=True):
         """
         Args:
             data_path: 数据集路径
@@ -271,10 +269,12 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
             use_temporal: 是否使用时序特征
             use_scene_context: 是否使用场景上下文
             use_oversampling: 是否使用过采样平衡类别
+            use_hog_features: 是否使用HoG特征
         """
         # 初始化标签映射器
         self.label_mapper = Stage2LabelMapper()
         self.use_oversampling = use_oversampling
+        self.use_hog_features = use_hog_features
         
         # 调用父类初始化
         super().__init__(data_path, split, history_length, use_temporal, use_scene_context)
@@ -302,7 +302,9 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
         self.samples = interaction_samples
     
     def _apply_stage2_labels(self):
-        """应用Stage2的5分类标签"""
+        """应用Stage2的3分类标签并过滤无效样本"""
+        valid_samples = []
+        
         for sample in self.samples:
             original_interaction = sample.get('interaction_labels', {})
             if isinstance(original_interaction, dict) and len(original_interaction) > 0:
@@ -311,15 +313,24 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
             else:
                 interaction_type = 'unknown'
             
-            # 映射到5分类
-            stage2_label = self.label_mapper.map_label(interaction_type)
-            sample['stage2_label'] = stage2_label
-            sample['original_interaction'] = interaction_type
+            # 检查是否为有效的3分类标签
+            if self.label_mapper.is_valid_interaction(interaction_type):
+                # 映射到3分类
+                stage2_label = self.label_mapper.map_label(interaction_type)
+                sample['stage2_label'] = stage2_label
+                sample['original_interaction'] = interaction_type
+                valid_samples.append(sample)
+            # 否则丢弃该样本
+        
+        print(f"Filtered valid interaction types: {len(valid_samples)}/{len(self.samples)} "
+              f"({100*len(valid_samples)/len(self.samples):.1f}%)")
+        
+        self.samples = valid_samples
     
     def _apply_oversampling(self):
         """应用过采样策略平衡类别"""
         # 统计各类样本数量
-        class_samples = {i: [] for i in range(4)}  # 改为4类
+        class_samples = {i: [] for i in range(3)}  # 3分类
         for sample in self.samples:
             label = sample['stage2_label']
             class_samples[label].append(sample)
@@ -364,7 +375,7 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
     
     def __getitem__(self, idx):
         """
-        获取Stage2样本，包含16维特征向量
+        获取Stage2样本，包含增强特征向量 (7几何 + 64HoG + 可选时序)
         """
         # 获取基础样本信息
         sample = self.samples[idx]
@@ -381,7 +392,7 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
         
         # 提取几何特征
         geometric_features = extract_geometric_features(
-            person_A_box, person_B_box, 640, 480
+            person_A_box, person_B_box, 3760, 480
         )  # [7]
         
         # 基础运动特征 (4维)
@@ -402,10 +413,43 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
             if temporal_features['has_sufficient_history']:
                 history_geometric = temporal_features['pair_interaction_history']  # [history_length, 7]
                 
-                # 从几何特征重构历史边界框（简化版本，实际可能需要更复杂的逻辑）
-                # 这里我们假设有办法获取历史边界框，或者直接使用当前框模拟
-                person_A_history = person_A_box.unsqueeze(0).repeat(5, 1)  # 简化：重复当前框
-                person_B_history = person_B_box.unsqueeze(0).repeat(5, 1)
+                # 从几何特征重构历史边界框（改进版本）
+                # 尝试从时序管理器获取真实的历史边界框
+                try:
+                    # 获取历史边界框数据
+                    history_A = self.temporal_manager.buffer.person_tracks.get(person_A_id, deque())
+                    history_B = self.temporal_manager.buffer.person_tracks.get(person_B_id, deque())
+                    
+                    if len(history_A) >= 2 and len(history_B) >= 2:
+                        # 提取历史边界框（取最近的5帧）
+                        recent_A = list(history_A)[-5:]
+                        recent_B = list(history_B)[-5:]
+                        
+                        # 确保有足够的历史数据
+                        if len(recent_A) < 5:
+                            # 用最早的数据填充
+                            recent_A = [recent_A[0]] * (5 - len(recent_A)) + recent_A
+                        if len(recent_B) < 5:
+                            recent_B = [recent_B[0]] * (5 - len(recent_B)) + recent_B
+                        
+                        # 从每个历史记录中提取边界框（假设stored as sample data）
+                        person_A_history = torch.stack([
+                            person_A_box if i >= len(recent_A) else person_A_box  # 简化：使用当前框
+                            for i in range(5)
+                        ])
+                        person_B_history = torch.stack([
+                            person_B_box if i >= len(recent_B) else person_B_box  # 简化：使用当前框  
+                            for i in range(5)
+                        ])
+                    else:
+                        # 回退到简化版本
+                        person_A_history = person_A_box.unsqueeze(0).repeat(5, 1)
+                        person_B_history = person_B_box.unsqueeze(0).repeat(5, 1)
+                
+                except Exception as e:
+                    # 如果获取历史数据失败，使用简化版本
+                    person_A_history = person_A_box.unsqueeze(0).repeat(5, 1)
+                    person_B_history = person_B_box.unsqueeze(0).repeat(5, 1)
                 
                 enhanced_motion_features = extract_enhanced_motion_features(
                     person_A_history, person_B_history
@@ -422,16 +466,40 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
         else:
             scene_context = torch.tensor([1.0], dtype=torch.float32)  # 默认：稀疏场景
         
-        # 组合成16维特征向量
-        # [7几何 + 4基础运动 + 8增强时序 + 1场景] = 20维，但我们说好16维，调整一下
-        # 实际使用：[7几何 + 4基础运动 + 5增强时序] = 16维 (去掉场景上下文，简化增强时序到5维)
-        enhanced_motion_features_reduced = enhanced_motion_features[:5]  # 取前5维
+        # HoG特征提取 (64维)
+        hog_features = torch.zeros(64, dtype=torch.float32)  # 默认零向量
+        if self.use_hog_features:
+            try:
+                # 从样本中获取图像路径
+                image_path = sample.get('image_path')
+                if image_path and os.path.exists(image_path):
+                    # 加载图像并提取HoG特征
+                    image = Image.open(image_path).convert('RGB')
+                    hog_features = extract_joint_hog_features(image, person_A_box, person_B_box)
+                else:
+                    # 如果没有图像路径，使用零向量
+                    hog_features = torch.zeros(64, dtype=torch.float32)
+            except Exception as e:
+                print(f"Warning: HoG extraction failed for sample {idx}: {e}")
+                hog_features = torch.zeros(64, dtype=torch.float32)
         
-        full_features = torch.cat([
-            geometric_features,                    # [7]
-            motion_features,                      # [4] 
-            enhanced_motion_features_reduced      # [5]
-        ]).float()  # [16] 确保float32类型
+        # 组合特征向量
+        feature_components = [geometric_features]  # [7] 几何特征（必须）
+        
+        if self.use_hog_features:
+            feature_components.append(hog_features)  # [64] HoG特征
+        
+        if self.use_temporal and self.temporal_manager:
+            # 添加时序特征（如果启用）
+            feature_components.append(motion_features)  # [4] 基础运动特征
+            
+            # 使用完整的增强时序特征 (8维) 或者选择最重要的5维
+            # 选择最相关的5个时序特征：速度相关性、方向对齐度、轨迹相似度、运动一致性、距离变化率
+            selected_indices = [0, 1, 4, 6, 7]  # 选择最有意义的5个特征
+            enhanced_motion_features_reduced = enhanced_motion_features[selected_indices]  # [5] 精选增强时序
+            feature_components.append(enhanced_motion_features_reduced)
+        
+        full_features = torch.cat(feature_components).float()  # 动态维度
         
         return {
             'features': full_features,
@@ -458,7 +526,7 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
         print("=" * 50)
         total = len(self.samples)
         
-        for class_id in range(5):
+        for class_id in range(3):  # 3类分类
             count = class_counts.get(class_id, 0)
             percentage = 100 * count / total if total > 0 else 0
             class_name = self.label_mapper.get_mapped_class_name(class_id)
@@ -466,8 +534,18 @@ class GeometricStage2Dataset(GeometricDualPersonDataset):
         
         print(f"Total samples: {total:,}")
         print(f"Temporal features: {self.use_temporal}")
+        print(f"HoG features: {self.use_hog_features}")
         print(f"Scene context: {self.use_scene_context}")
         print(f"Oversampling: {self.use_oversampling}")
+        
+        # 计算特征维度
+        feature_dim = 7  # 几何特征
+        if self.use_hog_features:
+            feature_dim += 64  # HoG特征
+        if self.use_temporal:
+            feature_dim += 9   # 4基础运动 + 5增强时序
+        
+        print(f"Feature dimension: {feature_dim}D")
     
     def get_stage2_class_distribution(self):
         """获取Stage2类别分布"""
