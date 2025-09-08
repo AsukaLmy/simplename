@@ -266,21 +266,27 @@ class Stage2Evaluator:
             predictions: [batch_size, 3] logits或[batch_size] 预测类别
             targets: [batch_size] 真实标签
         """
+        # 确保输入是numpy数组
+        if hasattr(predictions, 'cpu'):  # PyTorch tensor
+            predictions = predictions.cpu().numpy()
+        if hasattr(targets, 'cpu'):  # PyTorch tensor
+            targets = targets.cpu().numpy()
+        
         # 输入验证
-        if predictions.size(0) != targets.size(0):
-            raise ValueError(f"Batch size mismatch: predictions {predictions.size(0)}, targets{targets.size(0)}")
+        if predictions.shape[0] != targets.shape[0]:
+            raise ValueError(f"Batch size mismatch: predictions {predictions.shape[0]}, targets {targets.shape[0]}")
 
-        if targets.dim() != 1:
-            raise ValueError(f"Expected 1D targets tensor, got {targets.dim()}D")
+        if len(targets.shape) != 1:
+            raise ValueError(f"Expected 1D targets array, got {len(targets.shape)}D")
 
-        if predictions.dim() > 1:
-            pred_classes = torch.argmax(predictions, dim=1)
+        if len(predictions.shape) > 1:
+            pred_classes = np.argmax(predictions, axis=1)
         else:
             pred_classes = predictions
         
-        # 转换为numpy
-        pred_classes = pred_classes.cpu().numpy()
-        targets = targets.cpu().numpy()
+        # 确保是numpy数组
+        pred_classes = np.asarray(pred_classes)
+        targets = np.asarray(targets)
         
         # 存储预测结果
         self.predictions.extend(pred_classes)
