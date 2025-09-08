@@ -11,10 +11,15 @@ import numpy as np
 from typing import Optional, Tuple
 import os
 from PIL import Image
+import torchvision.models as models
+import torchvision.transforms as transforms
 
 # 导入现有特征提取函数
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 添加当前项目根目录到路径
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
 try:
     from geometric_features import extract_geometric_features
@@ -115,11 +120,21 @@ class HoGFeatureExtractor(nn.Module):
             torch.Tensor: [64] HoG特征向量
         """
         if image is None:
+            # print(f"Warning: No image provided for HoG extraction, using zeros")
             return torch.zeros(self.feature_dim, dtype=torch.float32)
         
         try:
             # 使用现有的HoG提取函数
             hog_features = extract_joint_hog_features(image, person_A_box, person_B_box)
+            
+            # # 检查提取的特征是否有效
+            # if hog_features is None:
+            #     print(f"Warning: HoG extraction returned None")
+            #     return torch.zeros(self.feature_dim, dtype=torch.float32)
+                
+            # if torch.all(hog_features == 0):
+            #     print(f"Warning: HoG extraction returned all zeros")
+                
             return hog_features
         except Exception as e:
             print(f"Warning: HoG feature extraction failed: {e}")
@@ -147,12 +162,13 @@ class SceneContextExtractor(nn.Module):
         """
         if not all_boxes:
             return torch.tensor([1.0], dtype=torch.float32)  # 默认稀疏场景
+
         
-        # 简单的场景密度计算
+        # 增强的场景上下文计算
         num_people = len(all_boxes)
         scene_density = min(num_people / 10.0, 1.0)  # 归一化到[0,1]
-        
         return torch.tensor([scene_density], dtype=torch.float32)
+
 
 
 class BasicFeatureFusion(nn.Module):
@@ -249,6 +265,13 @@ class BasicFeatureFusion(nn.Module):
         if feature_components:
             # all components now have shape [B, D_i]
             fused_features = torch.cat(feature_components, dim=1)
+            
+            # # 添加特征标准化 - 提高特征可分性
+            # # L2标准化，避免不同特征类型的量级差异
+            # feature_norm = torch.norm(fused_features, dim=1, keepdim=True)
+            # # 避免除零，添加小的epsilon
+            # feature_norm = torch.clamp(feature_norm, min=1e-8)
+            # fused_features = fused_features / feature_norm
         else:
             fused_features = torch.zeros((1, 0), dtype=torch.float32)
 

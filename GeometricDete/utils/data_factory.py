@@ -4,8 +4,10 @@ Data Factory for Stage2 Behavior Classification
 Creates appropriate datasets and data loaders based on configuration
 """
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
+from collections import Counter
 from typing import Tuple
+import torch
 import os
 
 from configs.stage2_config import Stage2Config
@@ -154,14 +156,99 @@ def create_stage2_data_loaders(config: Stage2Config) -> Tuple[DataLoader, DataLo
         raise ValueError(f"Unknown temporal_mode: {config.temporal_mode}")
     
     # 创建数据加载器
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        num_workers=config.num_workers,
-        pin_memory=True,
-        drop_last=True  # 确保批次大小一致
-    )
+    train_sampler = None
+    try:
+        if getattr(train_dataset, 'use_oversampling', False) or getattr(config, 'use_oversampling', False):
+            labels = None
+            if hasattr(train_dataset, 'get_labels'):
+                labels = train_dataset.get_labels()
+            elif hasattr(train_dataset, 'labels'):
+                labels = train_dataset.labels
+            elif hasattr(train_dataset, 'targets'):
+                labels = train_dataset.targets
+            elif hasattr(train_dataset, 'stage2_labels'):
+                labels = train_dataset.stage2_labels
+
+            if labels is None:
+                try:
+                    # 尝试从dataset迭代中提取label（注意dataset可能返回tensor）
+                    raw_labels = []
+                    for sample in train_dataset:
+                        if isinstance(sample, dict) and 'stage2_label' in sample:
+                            raw_labels.append(sample['stage2_label'])
+                        elif isinstance(sample, (list, tuple)) and len(sample) > 1:
+                            raw_labels.append(sample[1])
+                        else:
+                            raw_labels.append(None)
+                    labels = raw_labels
+                except Exception:
+                    labels = None
+
+            # 清理并强制转换标签为int，滤除None或非法项
+            labels_clean = []
+            if labels is not None:
+                for l in labels:
+                    try:
+                        if isinstance(l, torch.Tensor):
+                            labels_clean.append(int(l.item()))
+                        else:
+                            labels_clean.append(int(l))
+                    except Exception:
+                        continue
+
+            if labels_clean and len(labels_clean) > 0:
+                counts = Counter(labels_clean)
+                # 确保没有0计数的类，并且总样本数>0
+                total = float(len(labels_clean))
+                if total <= 0 or any([c <= 0 for c in counts.values()]):
+                    print("⚠️ Invalid class counts detected; falling back to shuffle=True")
+                else:
+                    classes = sorted(counts.keys())
+                    try:
+                        if len(classes) == 0:
+                            raise ValueError("No classes found when computing class weights")
+                        # ensure all counts are positive
+                        if any([counts[c] <= 0 for c in classes]):
+                            raise ValueError(f"Non-positive class counts: {dict(counts)}")
+
+                        class_weights = {int(c): float(total / (len(classes) * counts[c])) for c in classes}
+                        config.class_weights = class_weights
+
+                        sample_weights = [1.0 / float(counts[int(l)]) for l in labels_clean]
+                        train_sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
+                        print(f"✅ Enabled WeightedRandomSampler for training (classes={classes}, counts={dict(counts)})")
+                        print(f"   Computed class_weights: {config.class_weights}")
+                    except Exception as e:
+                        # 更详细的调试信息，帮助定位为何会出现除零或非法值
+                        debug_slice = labels_clean[:50]
+                        print("⚠️ Error while computing sampler weights; falling back to shuffle=True")
+                        print(f"   Exception: {e}")
+                        print(f"   len(labels_clean)={len(labels_clean)}, sample of labels={debug_slice}")
+                        print(f"   counts sample: {dict(list(counts.items())[:10])}")
+            else:
+                print("⚠️ Could not extract valid integer labels from train_dataset to build sampler; falling back to shuffle=True")
+
+    except Exception as e:
+        print(f"⚠️ Error while creating WeightedRandomSampler: {e}; falling back to shuffle=True")
+
+    if train_sampler is not None:
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=config.batch_size,
+            sampler=train_sampler,
+            num_workers=config.num_workers,
+            pin_memory=True,
+            drop_last=True
+        )
+    else:
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=config.batch_size,
+            shuffle=True,
+            num_workers=config.num_workers,
+            pin_memory=True,
+            drop_last=True
+        )
     
     val_loader = DataLoader(
         val_dataset,

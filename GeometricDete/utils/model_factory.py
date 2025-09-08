@@ -73,7 +73,7 @@ def create_stage2_model(config: Stage2Config) -> nn.Module:
             dropout=config.dropout,
             fusion_strategy=config.fusion_strategy
         )
-        print(f"✅ Created RelationStage2Classifier: Person({person_feature_dim}D)×2 + Spatial({spatial_feature_dim}D) → 3 classes ({config.fusion_strategy})")
+        print(f"Created RelationStage2Classifier: Person({person_feature_dim}D)x2 + Spatial({spatial_feature_dim}D) -> 3 classes ({config.fusion_strategy})")
         
     else:
         raise ValueError(f"Unknown temporal_mode: {config.temporal_mode}")
@@ -96,12 +96,18 @@ def create_stage2_loss(config: Stage2Config) -> Stage2Loss:
     Returns:
         Stage2Loss: 损失函数
     """
+    # 如果config中没有class_weights，提供均匀权重作为兜底
+    if not hasattr(config, 'class_weights') or config.class_weights is None:
+        # 假设3类均匀权重
+        config.class_weights = {0: 1.0, 1: 1.0, 2: 1.0}
+        print("⚠️ config.class_weights not found — using uniform fallback weights: {0:1.0,1:1.0,2:1.0}")
+
     criterion = Stage2Loss(
         class_weights=config.class_weights,
         mpca_weight=config.mpca_weight,
         acc_weight=config.acc_weight
     )
-    
+
     print(f"✅ Created Stage2Loss: weights={config.class_weights}")
     return criterion
 

@@ -20,6 +20,60 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.feature_extractors import BasicFeatureFusion
 
 
+def get_fixed_scene_splits():
+    """
+    固定的数据集场景划分 - 确保所有模式使用相同的划分
+    """
+    trainset_split = [
+        'bytes-cafe-2019-02-07_0', 
+        'clark-center-2019-02-28_0', 
+        'cubberly-auditorium-2019-04-22_0',
+        'forbes-cafe-2019-01-22_0', 
+        'gates-159-group-meeting-2019-04-03_0',
+        'gates-to-clark-2019-02-28_1',
+        'gates-ai-lab-2019-02-08_0',
+        'hewlett-packard-intersection-2019-01-24_0', 
+        'huang-2-2019-01-25_0', 
+        'huang-basement-2019-01-25_0',
+        'huang-lane-2019-02-12_0', 
+        'memorial-court-2019-03-16_0', 
+        'meyer-green-2019-03-16_0',
+        'nvidia-aud-2019-04-18_0', 
+        'packard-poster-session-2019-03-20_2', 
+        'stlc-111-2019-04-19_0', 
+        'svl-meeting-gates-2-2019-04-08_0',
+        'tressider-2019-04-26_2',
+        'jordan-hall-2019-04-22_0', 
+    ]
+    
+    valset_split = [
+        'clark-center-2019-02-28_1',
+        'gates-basement-elevators-2019-01-17_1', 
+        'packard-poster-session-2019-03-20_1',
+        'svl-meeting-gates-2-2019-04-08_1',
+        'tressider-2019-03-16_1',
+        # 'clark-center-2019-02-28_0', 
+        # 'cubberly-auditorium-2019-04-22_0',
+        # 'forbes-cafe-2019-01-22_0', 
+        # 'gates-159-group-meeting-2019-04-03_0',
+        # 'gates-to-clark-2019-02-28_1',
+    ]
+    
+    testset_split = [
+        'packard-poster-session-2019-03-20_0',
+        'clark-center-intersection-2019-02-28_0', 
+        
+        'stlc-111-2019-04-19_0', 
+        'tressider-2019-03-16_0',
+    ]
+    
+    return {
+        'train': trainset_split,
+        'val': valset_split,
+        'test': testset_split
+    }
+
+
 class Stage2LabelMapper:
     """Stage2标签映射器 - 3分类"""
     
@@ -113,16 +167,20 @@ class BasicStage2Dataset(Dataset):
         scene_files = [f for f in os.listdir(social_labels_dir) if f.endswith('.json')]
         scene_files.sort()  # 确保一致的顺序
         
-        # 数据集划分
-        total_scenes = len(scene_files)
-        if self.split == 'train':
-            selected_files = scene_files[:int(0.7 * total_scenes)]
-        elif self.split == 'val':
-            selected_files = scene_files[int(0.7 * total_scenes):int(0.85 * total_scenes)]
-        else:  # test
-            selected_files = scene_files[int(0.85 * total_scenes):]
+        # 使用固定场景划分
+        scene_splits = get_fixed_scene_splits()
+        target_scenes = scene_splits[self.split]
         
-        print(f"Loading {len(selected_files)} scenes for {self.split} split")
+        # 筛选存在的场景文件
+        selected_files = []
+        for scene_name in target_scenes:
+            scene_file = f"{scene_name}.json"
+            if scene_file in scene_files:
+                selected_files.append(scene_file)
+            else:
+                print(f"Warning: Scene file {scene_file} not found in dataset")
+        
+        print(f"Loading {len(selected_files)}/{len(target_scenes)} scenes for {self.split} split")
         
         # 加载数据
         sample_count = 0
@@ -745,16 +803,20 @@ class RelationStage2Dataset(Dataset):
         scene_files = [f for f in os.listdir(social_labels_dir) if f.endswith('.json')]
         scene_files.sort()  # 确保一致的顺序
         
-        # 数据集划分
-        total_scenes = len(scene_files)
-        if self.split == 'train':
-            selected_files = scene_files[:int(0.7 * total_scenes)]
-        elif self.split == 'val':
-            selected_files = scene_files[int(0.7 * total_scenes):int(0.85 * total_scenes)]
-        else:  # test
-            selected_files = scene_files[int(0.85 * total_scenes):]
+        # 使用固定场景划分
+        scene_splits = get_fixed_scene_splits()
+        target_scenes = scene_splits[self.split]
         
-        print(f"Loading {len(selected_files)} scenes for {self.split} split")
+        # 筛选存在的场景文件
+        selected_files = []
+        for scene_name in target_scenes:
+            scene_file = f"{scene_name}.json"
+            if scene_file in scene_files:
+                selected_files.append(scene_file)
+            else:
+                print(f"Warning: Scene file {scene_file} not found in dataset")
+        
+        print(f"Loading {len(selected_files)}/{len(target_scenes)} scenes for {self.split} split")
         
         # 加载数据
         sample_count = 0
