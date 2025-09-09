@@ -199,11 +199,23 @@ class Stage2Trainer:
         
         with torch.no_grad():
             for batch in test_loader:
-                features = batch['features'].to(self.device)
+                # 处理不同模式的输入数据格式
                 targets = batch['stage2_label'].to(self.device)
                 
-                # 前向传播
-                outputs = self.model(features)
+                if self.config.temporal_mode == 'lstm':
+                    # LSTM模式使用sequences字段
+                    inputs = batch['sequences'].to(self.device)
+                    outputs = self.model(inputs)
+                elif self.config.temporal_mode == 'relation':
+                    # Relation模式使用分离的特征
+                    person_A_features = batch['person_A_features'].to(self.device)
+                    person_B_features = batch['person_B_features'].to(self.device)
+                    spatial_features = batch['spatial_features'].to(self.device)
+                    outputs = self.model(person_A_features, person_B_features, spatial_features)
+                else:
+                    # Basic模式使用features字段
+                    inputs = batch['features'].to(self.device)
+                    outputs = self.model(inputs)
                 loss, loss_dict = self.criterion(outputs, targets)
                 
                 # 记录指标

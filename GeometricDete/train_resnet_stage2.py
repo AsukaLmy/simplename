@@ -376,11 +376,24 @@ class ResNetStage2Trainer:
             
             test_loss, test_acc, test_mpca, test_metrics = self.test_epoch(test_loader)
             
+            # 转换numpy数组为Python列表以便JSON序列化
+            def convert_numpy_to_list(obj):
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                elif isinstance(obj, dict):
+                    return {k: convert_numpy_to_list(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_numpy_to_list(item) for item in obj]
+                else:
+                    return obj
+            
+            serializable_test_metrics = convert_numpy_to_list(test_metrics)
+            
             # 保存最终结果
             final_results = {
                 'test_accuracy': test_acc,
                 'test_mpca': test_mpca,
-                'test_metrics': test_metrics,
+                'test_metrics': serializable_test_metrics,
                 'best_val_accuracy': self.best_val_acc,
                 'best_val_mpca': self.best_val_mpca,
                 'config': {
