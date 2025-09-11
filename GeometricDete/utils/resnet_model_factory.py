@@ -36,7 +36,11 @@ def create_resnet_stage2_model(config: ResNetStage2Config) -> nn.Module:
         spatial_feature_dim=spatial_feature_dim,
         hidden_dims=config.relation_hidden_dims,
         dropout=config.dropout,
-        fusion_strategy=config.fusion_strategy
+        fusion_strategy=config.fusion_strategy,
+        backbone_name=config.backbone_name,
+        pretrained=config.pretrained,
+        freeze_backbone=config.freeze_backbone,
+        crop_size=config.crop_size
     )
     
     print(f"✅ Created ResNet Relation Network:")
