@@ -75,7 +75,6 @@ class ResNetStage2Dataset(Dataset):
         # store crop size
         self.crop_size = crop_size
 
-        # 固定的场景划分 (复用原有划分)
         self.trainset_split = [
         'bytes-cafe-2019-02-07_0', 
         'clark-center-2019-02-28_0', 
@@ -84,6 +83,7 @@ class ResNetStage2Dataset(Dataset):
         'gates-159-group-meeting-2019-04-03_0',
         'gates-to-clark-2019-02-28_1',
         'gates-ai-lab-2019-02-08_0',
+        'gates-basement-elevators-2019-01-17_1', 
         'hewlett-packard-intersection-2019-01-24_0', 
         'huang-2-2019-01-25_0', 
         'huang-basement-2019-01-25_0',
@@ -92,26 +92,32 @@ class ResNetStage2Dataset(Dataset):
         'meyer-green-2019-03-16_0',
         'nvidia-aud-2019-04-18_0', 
         'packard-poster-session-2019-03-20_2', 
+        'packard-poster-session-2019-03-20_0',
+        'packard-poster-session-2019-03-20_1',
         'stlc-111-2019-04-19_0', 
         'svl-meeting-gates-2-2019-04-08_0',
+        'tressider-2019-03-16_1',
         'tressider-2019-04-26_2',
+        
         'jordan-hall-2019-04-22_0', 
         ]
         
         self.valset_split = [
         'clark-center-2019-02-28_1',
-        'gates-basement-elevators-2019-01-17_1', 
-        'packard-poster-session-2019-03-20_1',
-        'svl-meeting-gates-2-2019-04-08_1',
-        'tressider-2019-03-16_1',
+        # 'packard-poster-session-2019-03-20_0',
+        
+        'tressider-2019-04-26_2',
+        'huang-basement-2019-01-25_0',
         ]
         
         self.testset_split = [
-        'packard-poster-session-2019-03-20_0',
-        'clark-center-intersection-2019-02-28_0', 
-        
-        'stlc-111-2019-04-19_0', 
         'tressider-2019-03-16_0',
+        'clark-center-intersection-2019-02-28_0', 
+        'huang-basement-2019-01-25_0',
+        'svl-meeting-gates-2-2019-04-08_1',
+        
+        # 'stlc-111-2019-04-19_0', 
+        
         ]
         
         # 加载数据
