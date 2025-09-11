@@ -185,12 +185,12 @@ def compute_scene_context(all_boxes_in_frame, image_width=1000.0, image_height=1
     # Simple crowd level classification
     if num_people == 0:
         crowd_level = 0.0    # Empty scene
-    elif num_people <= 2:
-        crowd_level = 1.0    # Sparse (1-2 people)
     elif num_people <= 5:
-        crowd_level = 2.0    # Moderate (3-5 people) 
+        crowd_level = 1.0    # Sparse (0-5 people)
+    elif num_people <= 10:
+        crowd_level = 2.0    # Moderate (5-10 people) 
     else:
-        crowd_level = 3.0    # Crowded (6+ people)
+        crowd_level = 15    # Crowded (15+ people)
     
     return torch.tensor([crowd_level])
 

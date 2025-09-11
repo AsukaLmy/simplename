@@ -107,6 +107,9 @@ class ResNetStage2Trainer:
         self.val_accuracies = []
         self.val_mpcas = []
         
+        # 详细的epoch记录
+        self.epoch_results = []
+        
         # 最佳模型记录
         self.best_val_mpca = 0.0
         self.best_val_acc = 0.0
@@ -296,6 +299,97 @@ class ResNetStage2Trainer:
         
         return avg_loss, test_acc, test_mpca, test_metrics
     
+    def save_and_print_epoch_results(self, epoch, train_loss, train_acc, train_mpca, train_details, 
+                                   val_loss=None, val_acc=None, val_mpca=None, val_metrics=None):
+        """保存和打印epoch结果"""
+        epoch_result = {
+            'epoch': epoch,
+            'train': {
+                'loss': train_loss,
+                'accuracy': train_acc,
+                'mpca': train_mpca,
+                'ce_loss': train_details.get('ce_loss', 0.0),
+                'mpca_loss': train_details.get('mpca_loss', 0.0),
+                'detailed_metrics': train_details.get('detailed_metrics', {})
+            }
+        }
+        
+        if val_loss is not None:
+            epoch_result['val'] = {
+                'loss': val_loss,
+                'accuracy': val_acc,
+                'mpca': val_mpca,
+                'detailed_metrics': val_metrics or {}
+            }
+        
+        # 添加到记录中
+        self.epoch_results.append(epoch_result)
+        
+        # 打印格式化结果
+        print(f"\n{'='*80}")
+        print(f"EPOCH {epoch} RESULTS")
+        print(f"{'='*80}")
+        print(f"Train - Loss: {train_loss:.6f} | Acc: {train_acc:.4f} | MPCA: {train_mpca:.4f}")
+        print(f"        CE Loss: {train_details.get('ce_loss', 0.0):.6f} | MPCA Loss: {train_details.get('mpca_loss', 0.0):.6f}")
+        
+        if val_loss is not None:
+            print(f"Val   - Loss: {val_loss:.6f} | Acc: {val_acc:.4f} | MPCA: {val_mpca:.4f}")
+            
+            # 打印详细的验证指标（如果有的话）
+            if val_metrics and 'per_class_accuracy' in val_metrics:
+                print("        Per-class accuracy:")
+                class_names = ['Walking Together', 'Standing Together', 'Sitting Together']
+                for i, (cls_name, acc) in enumerate(zip(class_names, val_metrics['per_class_accuracy'])):
+                    print(f"          {cls_name}: {acc:.4f}")
+        
+        print(f"Learning Rate: {self.optimizer.param_groups[0]['lr']:.2e}")
+        print(f"{'='*80}")
+        
+        # 每10个epoch或最后一个epoch时，保存到文件
+        if epoch % 10 == 0 or epoch == self.config.epochs:
+            self.save_results_to_file()
+    
+    def save_results_to_file(self):
+        """保存训练结果到JSON文件"""
+        def convert_numpy_to_list(obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, dict):
+                return {k: convert_numpy_to_list(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy_to_list(item) for item in obj]
+            else:
+                return obj
+        
+        # 确保检查点目录存在
+        os.makedirs(self.config.checkpoint_dir, exist_ok=True)
+        
+        # 准备保存的数据
+        save_data = {
+            'timestamp': datetime.now().isoformat(),
+            'config': {
+                'backbone_name': self.config.backbone_name,
+                'visual_feature_dim': self.config.visual_feature_dim,
+                'fusion_strategy': self.config.fusion_strategy,
+                'learning_rate': self.config.learning_rate,
+                'batch_size': self.config.batch_size,
+                'epochs': self.config.epochs,
+                'freeze_blocks': getattr(self.config, 'freeze_blocks', 0)
+            },
+            'best_metrics': {
+                'best_val_mpca': self.best_val_mpca,
+                'best_val_acc': self.best_val_acc
+            },
+            'epoch_results': convert_numpy_to_list(self.epoch_results)
+        }
+        
+        # 保存到文件
+        results_path = os.path.join(self.config.checkpoint_dir, 'training_results.json')
+        with open(results_path, 'w') as f:
+            json.dump(save_data, f, indent=2)
+        
+        print(f"Training results saved to: {results_path}")
+    
     def train(self, train_loader, val_loader, test_loader=None):
         """主训练循环"""
         print(f"\nStarting ResNet Stage2 training...")
@@ -320,6 +414,12 @@ class ResNetStage2Trainer:
                 self.train_accuracies.append(train_acc)
                 self.val_accuracies.append(val_acc)
                 self.val_mpcas.append(val_mpca)
+                
+                # 保存和打印epoch结果（包含验证结果）
+                self.save_and_print_epoch_results(
+                    epoch, train_loss, train_acc, train_mpca, train_details,
+                    val_loss, val_acc, val_mpca, val_metrics
+                )
                 
                 # 学习率调度
                 if self.scheduler:
@@ -361,6 +461,14 @@ class ResNetStage2Trainer:
                 # 打印当前最佳结果
                 print(f"Best Val MPCA: {self.best_val_mpca:.4f}, Best Val Acc: {self.best_val_acc:.4f}")
                 print(f"Epochs without improvement: {self.epochs_without_improvement}")
+            else:
+                # 只保存和打印训练结果
+                self.save_and_print_epoch_results(
+                    epoch, train_loss, train_acc, train_mpca, train_details
+                )
+        
+        # 训练完成，保存最终结果
+        self.save_results_to_file()
         
         # 训练完成，在测试集上评估
         if test_loader is not None:
@@ -485,11 +593,14 @@ def main():
     # 创建配置
     if args.backbone == 'resnet50':
         config = get_resnet50_config()
-    else:
+    elif args.backbone == 'resnet34':
+        config = get_resnet18_config()  # Use resnet18 config as base
+        config.backbone_name = 'resnet34'
+        config.visual_feature_dim = 256  # resnet34 has same output as resnet18
+    else:  # resnet18 is default
         config = get_resnet18_config()
     
-    # 更新配置
-    config.backbone_name = args.backbone
+    # Update config with command line arguments (but keep backbone_name consistent with config choice)
     config.visual_feature_dim = args.visual_dim
     config.fusion_strategy = args.fusion
     config.freeze_backbone = args.freeze_backbone
