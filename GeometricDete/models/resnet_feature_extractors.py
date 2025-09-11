@@ -95,14 +95,32 @@ class ResNetBackbone(nn.Module):
         Args:
             freeze_layers: 冻结前几个残差块 (1-4)
         """
+        if freeze_layers <= 0:
+            return
+            
         children = list(self.backbone.children())
-        layers_to_freeze = children[:freeze_layers+3]  # conv1, bn1, relu, maxpool + 前N个残差块
+        # ResNet structure: conv1, bn1, relu, maxpool, layer1, layer2, layer3, layer4
+        # For freeze_layers=1: freeze conv1, bn1, relu, maxpool, layer1
+        # For freeze_layers=2: freeze conv1, bn1, relu, maxpool, layer1, layer2, etc.
         
+        layers_to_freeze = []
+        # Always freeze initial conv, bn, relu, maxpool when freezing any layers
+        if len(children) >= 4:
+            layers_to_freeze.extend(children[:4])  # conv1, bn1, relu, maxpool
+        
+        # Add the specified number of residual layers
+        start_idx = 4  # Start after initial layers
+        end_idx = min(start_idx + freeze_layers, len(children))
+        layers_to_freeze.extend(children[start_idx:end_idx])
+        
+        frozen_count = 0
         for layer in layers_to_freeze:
             for param in layer.parameters():
-                param.requires_grad = False
+                if param.requires_grad:
+                    param.requires_grad = False
+                    frozen_count += 1
         
-        print(f"Frozen first {freeze_layers} residual blocks of {self.backbone_name}")
+        print(f"Frozen first {freeze_layers} residual blocks of {self.backbone_name} ({frozen_count} parameters)")
     
     def unfreeze_last_layers(self, unfreeze_layers: int = 1):
         """
