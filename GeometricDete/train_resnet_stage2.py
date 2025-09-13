@@ -555,7 +555,17 @@ def parse_args():
                        help='Frame sampling interval')
     parser.add_argument('--num_workers', type=int, default=4,
                        help='Number of data loading workers')
-    
+
+    # Feature control arguments
+    parser.add_argument('--use_geometric', action='store_true', default=True,
+                       help='Use 7D geometric features in spatial features')
+    parser.add_argument('--no_geometric', dest='use_geometric', action='store_false',
+                       help='Disable geometric features')
+    parser.add_argument('--use_scene_context', action='store_true', default=True,
+                       help='Use scene context features in spatial features')
+    parser.add_argument('--no_scene_context', dest='use_scene_context', action='store_false',
+                       help='Disable scene context features')
+
     # Other arguments
     parser.add_argument('--checkpoint_dir', type=str, default='./checkpoints/resnet_stage2',
                        help='Checkpoint directory')
@@ -614,6 +624,10 @@ def main():
     config.checkpoint_dir = args.checkpoint_dir
     config.log_interval = args.log_interval
     config.freeze_blocks = args.freeze_blocks
+
+    # Update feature control settings
+    config.use_geometric = args.use_geometric
+    config.use_scene_context = args.use_scene_context
     
     # 打印配置
     config.print_config()
