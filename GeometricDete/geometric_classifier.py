@@ -197,7 +197,7 @@ class CausalTemporalStage1(nn.Module):
         if scene_context is not None:
             context_processed = self.context_processor(scene_context)
         else:
-            context_processed = torch.zeros(batch_size, 8).to(current_geometric.device)
+            context_processed = torch.zeros(batch_size, 4).to(current_geometric.device)  # Match output dim
         
         # Fuse all information
         fused_features = torch.cat([

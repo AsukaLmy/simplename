@@ -474,7 +474,7 @@ def main():
                         help='Path to dataset directory')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size')
-    parser.add_argument('--num_workers', type=int, default=2,
+    parser.add_argument('--num_workers', type=int, default=0,
                         help='Number of data loading workers')
     
     # Model parameters
@@ -491,9 +491,11 @@ def main():
                         help='Number of models in ensemble')
     parser.add_argument('--dropout', type=float, default=0.1,
                         help='Dropout rate')
-    
+    parser.add_argument('--frame_interval', type=int, default=1,
+                        help='Frame sampling interval (1=every frame, 5=every 5th frame)')
+
     # Training parameters
-    parser.add_argument('--epochs', type=int, default=50,
+    parser.add_argument('--epochs', type=int, default=17,
                         help='Number of training epochs')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                         help='Learning rate')
@@ -516,77 +518,122 @@ def main():
                         help='Maximum gradient norm for clipping')
     
     # Training control
-    parser.add_argument('--early_stopping_patience', type=int, default=15,
+    parser.add_argument('--early_stopping_patience', type=int, default=5,
                         help='Early stopping patience')
     parser.add_argument('--log_interval', type=int, default=10,
                         help='Logging interval')
     
     # Feature options
-    parser.add_argument('--use_temporal', action='store_true', default=False,
+    parser.add_argument('--use_temporal', action='store_true', default=True,
                         help='Use temporal features')
     parser.add_argument('--no_temporal', dest='use_temporal', action='store_false',
                         help='Disable temporal features (default)')
-    parser.add_argument('--use_scene_context', action='store_true', default=True,
+    parser.add_argument('--use_scene_context', action='store_true', default=False,
                         help='Use scene context features')
     
     # Loading optimization parameters
     parser.add_argument('--loading_strategy', type=str, default='lazy',
                         choices=['cached', 'optimized', 'lazy', 'original'],
                         help='Data loading strategy: cached (fastest), optimized (balanced), lazy (memory efficient), original (fallback)')
+
+    # Dataset split parameters
+    parser.add_argument('--use_custom_splits', action='store_true', default=True,
+                        help='Use predefined scene splits instead of percentage-based splits')
+    parser.add_argument('--trainset_scenes', type=str, nargs='*', default=None,
+                        help='List of scene names for training set (only used with --use_custom_splits)')
+    parser.add_argument('--valset_scenes', type=str, nargs='*', default=None,
+                        help='List of scene names for validation set (only used with --use_custom_splits)')
+    parser.add_argument('--testset_scenes', type=str, nargs='*', default=None,
+                        help='List of scene names for test set (only used with --use_custom_splits)')
     
     args = parser.parse_args()
-    
-    # Create data loaders with optimized loading
-    print("Loading geometric data with optimized loader...")
-    
-    # Choose loading strategy
-    loading_strategy = args.loading_strategy
-    
-    if loading_strategy == 'cached':
-        # Use pre-computed cache for maximum speed
-        from fast_temporal_cache import create_fast_cached_data_loaders
-        train_loader, val_loader, test_loader = create_fast_cached_data_loaders(
-            data_path=args.data_path,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            use_temporal=args.use_temporal,
-            use_scene_context=args.use_scene_context,
-            history_length=args.history_length
-        )
-    elif loading_strategy == 'optimized':
-        # Use optimized multi-process loader
-        from optimized_dataloader import create_optimized_data_loaders
-        train_loader, val_loader, test_loader = create_optimized_data_loaders(
-            data_path=args.data_path,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            use_temporal=args.use_temporal,
-            use_scene_context=args.use_scene_context
-        )
-    elif loading_strategy == 'lazy':
-        # Use lazy loading for memory efficiency
-        from lazy_temporal import create_lazy_data_loaders
-        train_loader, val_loader, test_loader = create_lazy_data_loaders(
-            data_path=args.data_path,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            use_temporal=args.use_temporal,
-            use_scene_context=args.use_scene_context
-        )
+
+    # Handle custom dataset splits
+    if args.use_custom_splits:
+        print("Using custom scene splits for dataset...")
+        if args.trainset_scenes is None or args.valset_scenes is None or args.testset_scenes is None:
+            print("Warning: --use_custom_splits specified but not all scene lists provided.")
+            print("Using default scene splits from resnet_stage2_dataset.py")
+            from geometric_dataset import create_geometric_data_loaders_with_custom_splits
+            train_loader, val_loader, test_loader = create_geometric_data_loaders_with_custom_splits(
+                data_path=args.data_path,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                history_length=args.history_length,
+                use_temporal=args.use_temporal,
+                use_scene_context=args.use_scene_context,
+                frame_interval=args.frame_interval
+            )
+        else:
+            print(f"Custom splits: Train={len(args.trainset_scenes)}, Val={len(args.valset_scenes)}, Test={len(args.testset_scenes)} scenes")
+            from geometric_dataset import create_geometric_data_loaders
+            train_loader, val_loader, test_loader = create_geometric_data_loaders(
+                data_path=args.data_path,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                history_length=args.history_length,
+                use_temporal=args.use_temporal,
+                use_scene_context=args.use_scene_context,
+                trainset_split=args.trainset_scenes,
+                valset_split=args.valset_scenes,
+                testset_split=args.testset_scenes,
+                use_custom_splits=True,
+                frame_interval=args.frame_interval
+            )
     else:
-        # Fallback to original loader
-        from optimized_temporal_buffer import create_fast_geometric_data_loaders
-        train_loader, val_loader, test_loader = create_fast_geometric_data_loaders(
-            data_path=args.data_path,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            history_length=args.history_length,
-            use_temporal=args.use_temporal,
-            use_scene_context=args.use_scene_context
-        )
-    
-    print(f"Data loading strategy: {loading_strategy}")
-    
+        # Create data loaders with optimized loading (original logic)
+        print("Loading geometric data with optimized loader...")
+
+        # Choose loading strategy
+        loading_strategy = args.loading_strategy
+
+        if loading_strategy == 'cached':
+            # Use pre-computed cache for maximum speed
+            from fast_temporal_cache import create_fast_cached_data_loaders
+            train_loader, val_loader, test_loader = create_fast_cached_data_loaders(
+                data_path=args.data_path,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                use_temporal=args.use_temporal,
+                use_scene_context=args.use_scene_context,
+                history_length=args.history_length
+            )
+        elif loading_strategy == 'optimized':
+            # Use optimized multi-process loader
+            from optimized_dataloader import create_optimized_data_loaders
+            train_loader, val_loader, test_loader = create_optimized_data_loaders(
+                data_path=args.data_path,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                use_temporal=args.use_temporal,
+                use_scene_context=args.use_scene_context,
+                history_length=args.history_length
+            )
+        elif loading_strategy == 'lazy':
+            # Use lazy loading for memory efficiency
+            from lazy_temporal import create_lazy_data_loaders
+            train_loader, val_loader, test_loader = create_lazy_data_loaders(
+                data_path=args.data_path,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                use_temporal=args.use_temporal,
+                use_scene_context=args.use_scene_context,
+                history_length=args.history_length
+            )
+        else:
+            # Fallback to original loader
+            from optimized_temporal_buffer import create_fast_geometric_data_loaders
+            train_loader, val_loader, test_loader = create_fast_geometric_data_loaders(
+                data_path=args.data_path,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                history_length=args.history_length,
+                use_temporal=args.use_temporal,
+                use_scene_context=args.use_scene_context
+            )
+
+        print(f"Data loading strategy: {loading_strategy}")
+
     # Create trainer
     trainer = GeometricStage1Trainer(args)
     

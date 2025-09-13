@@ -11,7 +11,14 @@ import time
 def _frame_sort_key(frame_id):
     """Helper function for sorting frame IDs (pickle-friendly)"""
     parts = frame_id.split('_')
-    return (parts[0], int(parts[1]))
+    if len(parts) >= 2:
+        try:
+            # Handle format like "scene_name_000001"
+            return (parts[0], int(parts[-1]))  # Use last part as frame number
+        except ValueError:
+            # Fallback to string sorting
+            return frame_id
+    return frame_id
 
 def update_temporal_buffer_optimized(dataset):
     """
@@ -25,7 +32,8 @@ def update_temporal_buffer_optimized(dataset):
     """
     
     if not dataset.temporal_manager:
-        print("Temporal modeling disabled - skipping buffer update")
+        print("ERROR: Temporal manager not initialized - cannot update buffer")
+        print("Make sure dataset was created with use_temporal=True")
         return
     
     print("Starting optimized temporal buffer update...")
@@ -55,7 +63,7 @@ def update_temporal_buffer_optimized(dataset):
                 geometric_features = extract_geometric_features(
                     torch.tensor(sample['person_A_box']),
                     torch.tensor(sample['person_B_box']),
-                    640, 480
+                    3760, 480  # Use JRDB standard dimensions
                 )
                 feature_cache[key] = geometric_features
         
@@ -126,39 +134,30 @@ def create_fast_geometric_data_loaders(data_path, batch_size=32, num_workers=4,
     
     print("Creating optimized geometric data loaders...")
     
-    # Create datasets without temporal modeling first
+    # Create datasets with correct temporal setting from the start
+    print(f"Creating datasets with use_temporal={use_temporal}")
+    
     train_dataset = GeometricDualPersonDataset(
         data_path, split='train', history_length=history_length,
-        use_temporal=False,  # Disable initially
+        use_temporal=use_temporal,  # Use the correct setting
         use_scene_context=use_scene_context
     )
     
     val_dataset = GeometricDualPersonDataset(
         data_path, split='val', history_length=history_length,
-        use_temporal=False,
+        use_temporal=use_temporal,
         use_scene_context=use_scene_context
     )
     
     test_dataset = GeometricDualPersonDataset(
         data_path, split='test', history_length=history_length,
-        use_temporal=False,
+        use_temporal=use_temporal,
         use_scene_context=use_scene_context
     )
     
-    # Only enable temporal if specifically requested
+    # Update temporal buffers if temporal modeling is enabled
     if use_temporal:
         print("Enabling temporal modeling (this may take a while)...")
-        
-        # Enable temporal for datasets
-        train_dataset.use_temporal = True
-        val_dataset.use_temporal = True
-        test_dataset.use_temporal = True
-        
-        # Initialize temporal managers
-        from temporal_buffer import TemporalPairManager
-        train_dataset.temporal_manager = TemporalPairManager(history_length=history_length)
-        val_dataset.temporal_manager = TemporalPairManager(history_length=history_length)
-        test_dataset.temporal_manager = TemporalPairManager(history_length=history_length)
         
         # Update buffers with optimized method
         update_temporal_buffer_optimized(train_dataset)

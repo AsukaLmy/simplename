@@ -67,7 +67,7 @@ class OptimizedGeometricDataset:
         
         # Fast geometric feature extraction
         from geometric_features import extract_geometric_features
-        geometric_features = extract_geometric_features(person_A_box, person_B_box, 640, 480)
+        geometric_features = extract_geometric_features(person_A_box, person_B_box, 3760, 480)
         
         # Prepare result
         result = {
@@ -136,7 +136,7 @@ def custom_collate_fn(batch):
 
 
 def create_optimized_data_loaders(data_path, batch_size=32, num_workers=None, 
-                                use_temporal=True, use_scene_context=True):
+                                use_temporal=True, use_scene_context=True, history_length=5):
     """
     Create highly optimized data loaders
     """
@@ -151,15 +151,15 @@ def create_optimized_data_loaders(data_path, batch_size=32, num_workers=None,
     
     # Create base datasets
     train_dataset = GeometricDualPersonDataset(
-        data_path, split='train', use_temporal=False, use_scene_context=use_scene_context
+        data_path, split='train', history_length=history_length, use_temporal=False, use_scene_context=use_scene_context
     )
     
     val_dataset = GeometricDualPersonDataset(
-        data_path, split='val', use_temporal=False, use_scene_context=use_scene_context
+        data_path, split='val', history_length=history_length, use_temporal=False, use_scene_context=use_scene_context
     )
     
     test_dataset = GeometricDualPersonDataset(
-        data_path, split='test', use_temporal=False, use_scene_context=use_scene_context
+        data_path, split='test', history_length=history_length, use_temporal=False, use_scene_context=use_scene_context
     )
     
     # Setup temporal caching if needed

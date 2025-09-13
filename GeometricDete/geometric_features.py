@@ -91,12 +91,15 @@ def extract_geometric_features(box_A, box_B, image_width=3760, image_height=480)
             area_ratio,
             center_dist_norm,
             vertical_gap
-        ])
+        ], dtype=torch.float32)
         
         features.append(feature_vector)
     
     result = torch.stack(features)
-    return result.squeeze(0) if result.size(0) == 1 else result
+    if result.size(0) == 1:
+        return result.squeeze(0).clone()
+    else:
+        return result
 
 
 def extract_causal_motion_features(geometric_history):
@@ -123,7 +126,7 @@ def extract_causal_motion_features(geometric_history):
         
         if time_steps < 2:
             # Not enough history, return zero features
-            motion_features.append(torch.zeros(4))
+            motion_features.append(torch.zeros(4, dtype=torch.float32))
             continue
         
         # Extract distance changes over time
@@ -161,12 +164,15 @@ def extract_causal_motion_features(geometric_history):
             distance_trend_slope,
             is_approaching,
             motion_consistency
-        ])
+        ], dtype=torch.float32)
         
         motion_features.append(motion_feature)
     
     result = torch.stack(motion_features)
-    return result.squeeze(0) if result.size(0) == 1 else result
+    if result.size(0) == 1:
+        return result.squeeze(0).clone()
+    else:
+        return result
 
 
 def compute_scene_context(all_boxes_in_frame, image_width=1000.0, image_height=1000.0):
@@ -190,9 +196,9 @@ def compute_scene_context(all_boxes_in_frame, image_width=1000.0, image_height=1
     elif num_people <= 10:
         crowd_level = 2.0    # Moderate (5-10 people) 
     else:
-        crowd_level = 15    # Crowded (15+ people)
+        crowd_level = 3.0    # Crowded (10+ people)
     
-    return torch.tensor([crowd_level])
+    return torch.tensor([crowd_level], dtype=torch.float32)
 
 
 if __name__ == '__main__':

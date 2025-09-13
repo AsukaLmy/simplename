@@ -122,7 +122,7 @@ class LazyTemporalManager:
             person_A_box = torch.tensor(hist_sample['person_A_box'], dtype=torch.float32)
             person_B_box = torch.tensor(hist_sample['person_B_box'], dtype=torch.float32)
             
-            geometric_features = extract_geometric_features(person_A_box, person_B_box, 640, 480)
+            geometric_features = extract_geometric_features(person_A_box, person_B_box, 3760, 480)
             history_geometric.append(geometric_features)
         
         # Pad if not enough history
@@ -213,7 +213,7 @@ class LazyGeometricDataset:
 
 
 def create_lazy_data_loaders(data_path, batch_size=32, num_workers=2, 
-                           use_temporal=True, use_scene_context=True):
+                           use_temporal=True, use_scene_context=True, history_length=5):
     """
     Create data loaders with lazy temporal computation
     """
@@ -224,15 +224,15 @@ def create_lazy_data_loaders(data_path, batch_size=32, num_workers=2,
     
     # Create base datasets (disable their temporal processing)
     train_base = GeometricDualPersonDataset(
-        data_path, split='train', use_temporal=False, use_scene_context=use_scene_context
+        data_path, split='train', history_length=history_length, use_temporal=False, use_scene_context=use_scene_context
     )
     
     val_base = GeometricDualPersonDataset(
-        data_path, split='val', use_temporal=False, use_scene_context=use_scene_context
+        data_path, split='val', history_length=history_length, use_temporal=False, use_scene_context=use_scene_context
     )
     
     test_base = GeometricDualPersonDataset(
-        data_path, split='test', use_temporal=False, use_scene_context=use_scene_context
+        data_path, split='test', history_length=history_length, use_temporal=False, use_scene_context=use_scene_context
     )
     
     # Wrap with lazy datasets

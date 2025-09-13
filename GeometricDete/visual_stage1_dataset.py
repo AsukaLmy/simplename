@@ -294,19 +294,27 @@ class VisualStage1Dataset(Dataset):
         person_B_tensor = self.transform(person_B_img)
         
         # Extract geometric features
-        geometric_features = torch.zeros(7)
+        geometric_features = torch.zeros(7, dtype=torch.float32)
         if self.use_geometric:
             try:
-                geometric_features = extract_geometric_features(
+                geom_feats = extract_geometric_features(
                     sample['person_A_box'], sample['person_B_box'], 3760, 480
                 )
+                if isinstance(geom_feats, torch.Tensor):
+                    geometric_features = geom_feats.float()
+                else:
+                    geometric_features = torch.tensor(geom_feats, dtype=torch.float32)
             except Exception:
                 pass
         
         # Scene context
-        scene_context = torch.tensor([0.0])
+        scene_context = torch.tensor([0.0], dtype=torch.float32)
         try:
-            scene_context = compute_scene_context(sample['all_boxes'], 3760, 480)
+            scene_ctx = compute_scene_context(sample['all_boxes'], 3760, 480)
+            if isinstance(scene_ctx, torch.Tensor):
+                scene_context = scene_ctx.float()
+            else:
+                scene_context = torch.tensor(scene_ctx, dtype=torch.float32)
         except Exception:
             pass
         
