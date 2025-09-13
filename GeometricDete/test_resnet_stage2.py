@@ -117,41 +117,42 @@ class ResNetStage2Tester:
     def calculate_flops(self):
         """计算模型FLOPs"""
         if not THOP_AVAILABLE:
-            return None, None, None
-        
+            return None, None, None, None
+
         print("\n🔧 Calculating FLOPs...")
-        
-        # 创建示例输入
+
+        # 创建示例输入 - 使用实际的图像输入格式以准确计算FLOPs
         batch_size = 1
-        person_feature_dim = self.config.get_person_feature_dim()
+        crop_size = self.config.crop_size  # 通常是112
         spatial_feature_dim = self.config.get_spatial_feature_dim()
-        
-        # 检查模型是否期望图像输入还是特征输入
-        # 我们测试特征输入（预计算特征的情况）
-        person_A_features = torch.randn(batch_size, person_feature_dim).to(self.device)
-        person_B_features = torch.randn(batch_size, person_feature_dim).to(self.device)
+
+        # 创建图像输入张量（实际使用场景）
+        person_A_images = torch.randn(batch_size, 3, crop_size, crop_size).to(self.device)
+        person_B_images = torch.randn(batch_size, 3, crop_size, crop_size).to(self.device)
         spatial_features = torch.randn(batch_size, spatial_feature_dim).to(self.device)
-        
+
         try:
             # 计算FLOPs
             model_for_profile = self.model.module if hasattr(self.model, 'module') else self.model
             flops, params = profile(
-                model_for_profile, 
-                inputs=(person_A_features, person_B_features, spatial_features),
+                model_for_profile,
+                inputs=(person_A_images, person_B_images, spatial_features),
                 verbose=False
             )
-            
+
             # 格式化输出
             flops_str, params_str = clever_format([flops, params], "%.3f")
-            
+
             print(f"✅ FLOPs calculation completed:")
-            print(f"   FLOPs: {flops_str}")
-            print(f"   Params: {params_str}")
-            
+            print(f"   Input shape: Person A/B [{batch_size}, 3, {crop_size}, {crop_size}], Spatial [{batch_size}, {spatial_feature_dim}]")
+            print(f"   FLOPs: {flops_str} ({flops:,.0f})")
+            print(f"   Params: {params_str} ({params:,.0f})")
+
             return flops, params, flops_str, params_str
-            
+
         except Exception as e:
             print(f"❌ FLOPs calculation failed: {e}")
+            print(f"   Tried with input shapes: Person A/B [{batch_size}, 3, {crop_size}, {crop_size}], Spatial [{batch_size}, {spatial_feature_dim}]")
             return None, None, None, None
     
     def test_model(self):
