@@ -74,7 +74,7 @@ class ResNetStage2Config:
     def validate(self):
         """Validate configuration parameters"""
         # Backbone validation
-        supported_backbones = ['resnet18', 'resnet34', 'resnet50']
+        supported_backbones = ['resnet18', 'resnet34', 'resnet50', 'vgg11', 'vgg13', 'vgg16', 'vgg19', 'alexnet']
         if self.backbone_name not in supported_backbones:
             raise ValueError(
                 f"Unsupported backbone: {self.backbone_name}. Supported: {supported_backbones}"
@@ -212,21 +212,102 @@ def get_resnet18_config(**kwargs) -> ResNetStage2Config:
 def get_resnet50_config(**kwargs) -> ResNetStage2Config:
     """Get ResNet50 configuration (more powerful but slower)"""
     config = ResNetStage2Config(
-        backbone_name="resnet50", 
+        backbone_name="resnet50",
         visual_feature_dim=512,
         relation_hidden_dims=[1024, 512, 256],
         batch_size=8,  # Smaller batch size for larger model
         learning_rate=5e-5  # Lower LR for larger model
     )
-    
+
     # Update with any provided kwargs
     for key, value in kwargs.items():
         if hasattr(config, key):
             setattr(config, key, value)
         else:
             print(f"Warning: Unknown config parameter: {key}")
-    
+
     return config
+
+
+def get_vgg16_config(**kwargs) -> ResNetStage2Config:
+    """Get VGG16 configuration"""
+    config = ResNetStage2Config(
+        backbone_name="vgg16",
+        visual_feature_dim=512,  # VGG16输出512维特征
+        relation_hidden_dims=[512, 256, 128],
+        batch_size=8,   # VGG需要更多显存
+        learning_rate=5e-5  # 较低学习率
+    )
+
+    for key, value in kwargs.items():
+        if hasattr(config, key):
+            setattr(config, key, value)
+        else:
+            print(f"Warning: Unknown config parameter: {key}")
+
+    return config
+
+
+def get_vgg19_config(**kwargs) -> ResNetStage2Config:
+    """Get VGG19 configuration"""
+    config = ResNetStage2Config(
+        backbone_name="vgg19",
+        visual_feature_dim=512,
+        relation_hidden_dims=[512, 256, 128],
+        batch_size=6,   # 更小批次
+        learning_rate=5e-5
+    )
+
+    for key, value in kwargs.items():
+        if hasattr(config, key):
+            setattr(config, key, value)
+        else:
+            print(f"Warning: Unknown config parameter: {key}")
+
+    return config
+
+
+def get_alexnet_config(**kwargs) -> ResNetStage2Config:
+    """Get AlexNet configuration"""
+    config = ResNetStage2Config(
+        backbone_name="alexnet",
+        visual_feature_dim=256,  # AlexNet输出256维特征
+        relation_hidden_dims=[256, 128, 64],
+        batch_size=32,  # AlexNet较轻量，可以用大批次
+        learning_rate=1e-4
+    )
+
+    for key, value in kwargs.items():
+        if hasattr(config, key):
+            setattr(config, key, value)
+        else:
+            print(f"Warning: Unknown config parameter: {key}")
+
+    return config
+
+
+def create_backbone_config(backbone_name: str, **kwargs) -> ResNetStage2Config:
+    """根据backbone名称创建对应配置"""
+    config_functions = {
+        'resnet18': get_resnet18_config,
+        'resnet34': lambda **kw: get_resnet18_config(backbone_name='resnet34', **kw),
+        'resnet50': get_resnet50_config,
+        'vgg11': lambda **kw: get_alexnet_config(backbone_name='vgg11', **kw),
+        'vgg13': lambda **kw: get_alexnet_config(backbone_name='vgg13', **kw),
+        'vgg16': get_vgg16_config,
+        'vgg19': get_vgg19_config,
+        'alexnet': get_alexnet_config
+    }
+
+    if backbone_name in config_functions:
+        return config_functions[backbone_name](**kwargs)
+    else:
+        raise ValueError(f"Unsupported backbone: {backbone_name}")
+
+
+def get_backbone_config(backbone_name: str, **kwargs) -> ResNetStage2Config:
+    """获取backbone配置的便捷函数"""
+    return create_backbone_config(backbone_name, **kwargs)
 
 
 if __name__ == '__main__':
