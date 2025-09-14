@@ -29,6 +29,15 @@ from utils.resnet_model_factory import create_resnet_training_setup, ResNetModel
 from models.resnet_stage2_classifier import ResNetRelationStage2Classifier
 from geometric_stage2_classifier import Stage2Evaluator  # 复用评估器
 
+# 导入FLOP计算库
+try:
+    from thop import profile, clever_format
+    THOP_AVAILABLE = True
+except ImportError:
+    print("Warning: thop not available. FLOPs calculation will be skipped.")
+    THOP_AVAILABLE = False
+
+
 
 class ResNetStage2Trainer:
     """ResNet-based Stage2 behavior classification trainer"""
@@ -349,8 +358,50 @@ class ResNetStage2Trainer:
         if epoch % 10 == 0 or epoch == self.config.epochs:
             self.save_results_to_file()
     
+    def calculate_flops(self):
+        """计算模型FLOPs"""
+        if not THOP_AVAILABLE:
+            return None, None, None, None
+
+        print("\n🔧 Calculating FLOPs for trained model...")
+
+        try:
+            # 创建示例输入 - 使用实际的图像输入格式
+            batch_size = 1
+            crop_size = self.config.crop_size
+            spatial_feature_dim = self.config.get_spatial_feature_dim()
+
+            # 创建图像输入张量
+            person_A_images = torch.randn(batch_size, 3, crop_size, crop_size).to(self.device)
+            person_B_images = torch.randn(batch_size, 3, crop_size, crop_size).to(self.device)
+            spatial_features = torch.randn(batch_size, spatial_feature_dim).to(self.device)
+
+            # 计算FLOPs
+            model_for_profile = self.model.module if hasattr(self.model, 'module') else self.model
+            flops, params = profile(
+                model_for_profile,
+                inputs=(person_A_images, person_B_images, spatial_features),
+                verbose=False
+            )
+
+            # 格式化输出
+            flops_str, params_str = clever_format([flops, params], "%.3f")
+
+            print(f"✅ FLOPs calculation completed:")
+            print(f"   FLOPs: {flops_str} ({flops:,.0f})")
+            print(f"   Params: {params_str} ({params:,.0f})")
+
+            return flops, params, flops_str, params_str
+
+        except Exception as e:
+            print(f"❌ FLOPs calculation failed: {e}")
+            return None, None, None, None
+
     def save_results_to_file(self):
         """保存训练结果到JSON文件"""
+        # 计算FLOPs
+        flops_results = self.calculate_flops()
+
         def convert_numpy_to_list(obj):
             if isinstance(obj, np.ndarray):
                 return obj.tolist()
@@ -360,10 +411,10 @@ class ResNetStage2Trainer:
                 return [convert_numpy_to_list(item) for item in obj]
             else:
                 return obj
-        
+
         # 确保检查点目录存在
         os.makedirs(self.config.checkpoint_dir, exist_ok=True)
-        
+
         # 准备保存的数据
         save_data = {
             'timestamp': datetime.now().isoformat(),
@@ -374,7 +425,15 @@ class ResNetStage2Trainer:
                 'learning_rate': self.config.learning_rate,
                 'batch_size': self.config.batch_size,
                 'epochs': self.config.epochs,
-                'freeze_blocks': getattr(self.config, 'freeze_blocks', 0)
+                'freeze_blocks': getattr(self.config, 'freeze_blocks', 0),
+                'use_geometric': getattr(self.config, 'use_geometric', True),
+                'use_scene_context': getattr(self.config, 'use_scene_context', True)
+            },
+            'hardware_requirements': {
+                'flops': flops_results[0] if flops_results and flops_results[0] else None,
+                'flops_str': flops_results[2] if flops_results and flops_results[2] else None,
+                'parameters': flops_results[1] if flops_results and flops_results[1] else sum(p.numel() for p in self.model.parameters()),
+                'params_str': flops_results[3] if flops_results and flops_results[3] else None
             },
             'best_metrics': {
                 'best_val_mpca': self.best_val_mpca,
@@ -475,14 +534,17 @@ class ResNetStage2Trainer:
             print(f"\n{'='*60}")
             print("FINAL TEST EVALUATION")
             print(f"{'='*60}")
-            
+
             # 加载最佳模型
             best_model_path = os.path.join(self.config.checkpoint_dir, 'best_model.pth')
             if os.path.exists(best_model_path):
                 print("Loading best model for test evaluation...")
                 self.checkpoint_manager.load_checkpoint(best_model_path, self.model)
-            
+
             test_loss, test_acc, test_mpca, test_metrics = self.test_epoch(test_loader)
+
+            # 计算FLOPs
+            flops_results = self.calculate_flops()
             
             # 转换numpy数组为Python列表以便JSON序列化
             def convert_numpy_to_list(obj):
@@ -504,6 +566,10 @@ class ResNetStage2Trainer:
                 'test_metrics': serializable_test_metrics,
                 'best_val_accuracy': self.best_val_acc,
                 'best_val_mpca': self.best_val_mpca,
+                'flops': flops_results[0] if flops_results and flops_results[0] else None,
+                'flops_str': flops_results[2] if flops_results and flops_results[2] else None,
+                'parameters': flops_results[1] if flops_results and flops_results[1] else None,
+                'params_str': flops_results[3] if flops_results and flops_results[3] else None,
                 'config': {
                     'backbone_name': self.config.backbone_name,
                     'visual_feature_dim': self.config.visual_feature_dim,
