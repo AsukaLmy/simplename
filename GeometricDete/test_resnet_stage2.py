@@ -73,13 +73,22 @@ class ResNetStage2Tester:
         if 'config' in checkpoint:
             backbone_name = checkpoint['config'].get('backbone_name', 'resnet18')
             visual_feature_dim = checkpoint['config'].get('visual_feature_dim', 256)
+            # 关键：获取训练时的特征使用配置
+            use_geometric = checkpoint['config'].get('use_geometric', True)
+            use_scene_context = checkpoint['config'].get('use_scene_context', True)
+            fusion_strategy = checkpoint['config'].get('fusion_strategy', 'concat')
+            relation_hidden_dims = checkpoint['config'].get('relation_hidden_dims', [128, 64, 32])
         else:
             # 如果没有配置信息，尝试从模型信息推断
             model_info = checkpoint.get('model_info', {})
             backbone_name = 'resnet18'  # 默认值
             visual_feature_dim = 256
+            use_geometric = True
+            use_scene_context = True
+            fusion_strategy = 'concat'
+            relation_hidden_dims = [128, 64, 32]
             print("Warning: No config found in checkpoint, using defaults")
-        
+
         # 根据backbone类型创建对应配置
         if backbone_name == 'resnet50':
             config = get_resnet50_config()
@@ -87,10 +96,22 @@ class ResNetStage2Tester:
             config = get_resnet18_config()
             if backbone_name == 'resnet34':
                 config.backbone_name = 'resnet34'
-        
-        # 更新配置
+
+        # 更新配置 - 必须与训练时保持一致
         config.visual_feature_dim = visual_feature_dim
+        config.use_geometric = use_geometric
+        config.use_scene_context = use_scene_context
+        config.fusion_strategy = fusion_strategy
+        config.relation_hidden_dims = relation_hidden_dims
         config.data_path = self.data_path
+
+        print(f"✅ Model configuration from checkpoint:")
+        print(f"   backbone: {backbone_name}")
+        print(f"   fusion_strategy: {fusion_strategy}")
+        print(f"   use_geometric: {use_geometric}")
+        print(f"   use_scene_context: {use_scene_context}")
+        print(f"   spatial_feature_dim: {config.get_spatial_feature_dim()}")
+        print(f"   relation_hidden_dims: {relation_hidden_dims}")
         
         # 创建模型
         model = create_resnet_stage2_model(config)

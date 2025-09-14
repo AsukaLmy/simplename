@@ -593,9 +593,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='ResNet Stage2 Behavior Classification Training')
     
     # Model arguments
-    parser.add_argument('--backbone', type=str, default='resnet18', 
-                       choices=['resnet18', 'resnet34', 'resnet50'],
-                       help='ResNet backbone architecture')
+    parser.add_argument('--backbone', type=str, default='resnet18',
+                       choices=['resnet18', 'resnet34', 'resnet50', 'vgg11', 'vgg13', 'vgg16', 'vgg19', 'alexnet'],
+                       help='CNN backbone architecture (ResNet/VGG/AlexNet)')
     parser.add_argument('--visual_dim', type=int, default=256,
                        help='Visual feature dimension')
     parser.add_argument('--fusion', type=str, default='concat',
@@ -666,15 +666,18 @@ def main():
         print(f"GPU: {torch.cuda.get_device_name()}")
         print(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
     
-    # 创建配置
-    if args.backbone == 'resnet50':
-        config = get_resnet50_config()
-    elif args.backbone == 'resnet34':
-        config = get_resnet18_config()  # Use resnet18 config as base
-        config.backbone_name = 'resnet34'
-        config.visual_feature_dim = 256  # resnet34 has same output as resnet18
-    else:  # resnet18 is default
+    # 导入新的配置创建函数
+    from configs.resnet_stage2_config import create_backbone_config
+
+    # 创建配置 - 自动选择合适的配置
+    try:
+        config = create_backbone_config(args.backbone)
+        print(f"✅ Using optimized config for {args.backbone}")
+    except ValueError:
+        # 回退到默认配置
+        print(f"⚠️ No optimized config for {args.backbone}, using default resnet18 config")
         config = get_resnet18_config()
+        config.backbone_name = args.backbone
     
     # Update config with command line arguments (but keep backbone_name consistent with config choice)
     config.visual_feature_dim = args.visual_dim
