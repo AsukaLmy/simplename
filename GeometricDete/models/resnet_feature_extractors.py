@@ -49,20 +49,66 @@ class ResNetBackbone(nn.Module):
         # 创建backbone
         if backbone_name == 'resnet18':
             self.backbone = models.resnet18(pretrained=pretrained)
+            self.backbone = nn.Sequential(*list(self.backbone.children())[:-1])  # 去除fc层
             backbone_dim = 512
+
         elif backbone_name == 'resnet34':
             self.backbone = models.resnet34(pretrained=pretrained)
+            self.backbone = nn.Sequential(*list(self.backbone.children())[:-1])
             backbone_dim = 512
+
         elif backbone_name == 'resnet50':
             self.backbone = models.resnet50(pretrained=pretrained)
+            self.backbone = nn.Sequential(*list(self.backbone.children())[:-1])
             backbone_dim = 2048
+
+        # VGG系列
+        elif backbone_name == 'vgg11':
+            vgg = models.vgg11(pretrained=pretrained)
+            self.backbone = nn.Sequential(
+                vgg.features,
+                nn.AdaptiveAvgPool2d((1, 1))  # 统一输出到1x1，保持与ResNet一致
+            )
+            backbone_dim = 512
+
+        elif backbone_name == 'vgg13':
+            vgg = models.vgg13(pretrained=pretrained)
+            self.backbone = nn.Sequential(
+                vgg.features,
+                nn.AdaptiveAvgPool2d((1, 1))
+            )
+            backbone_dim = 512
+
+        elif backbone_name == 'vgg16':
+            vgg = models.vgg16(pretrained=pretrained)
+            self.backbone = nn.Sequential(
+                vgg.features,
+                nn.AdaptiveAvgPool2d((1, 1))  # 关键：统一输出维度
+            )
+            backbone_dim = 512
+
+        elif backbone_name == 'vgg19':
+            vgg = models.vgg19(pretrained=pretrained)
+            self.backbone = nn.Sequential(
+                vgg.features,
+                nn.AdaptiveAvgPool2d((1, 1))
+            )
+            backbone_dim = 512
+
+        # AlexNet
+        elif backbone_name == 'alexnet':
+            alexnet = models.alexnet(pretrained=pretrained)
+            self.backbone = nn.Sequential(
+                alexnet.features,
+                nn.AdaptiveAvgPool2d((1, 1))  # 统一输出到1x1
+            )
+            backbone_dim = 256
+
         else:
-            raise ValueError(f"Unsupported backbone: {backbone_name}")
-        
-        # 移除最后的全连接层，只保留特征提取部分
-        self.backbone = nn.Sequential(*list(self.backbone.children())[:-1])  # 去除fc层
-        
-        # 添加自适应池化确保固定输出尺寸
+            raise ValueError(f"Unsupported backbone: {backbone_name}. "
+                           f"Supported: resnet18/34/50, vgg11/13/16/19, alexnet")
+
+        # 添加自适应池化确保固定输出尺寸（对于ResNet）
         self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))
         
         # 特征映射层
